@@ -1,0 +1,24 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# LLM cache & temporary artifacts
+.llm_cache/
+.git/.llm_cache/
+
+# Environment files
+.env
+.env.local
+*.secret
+
+# IDE and OS
+.DS_Store
+.vscode/
+.idea/
+
+# Dynamically generated assistant tooling artifacts
+CLAUDE.md
+.claude/
+.agents/hooks.json
+.agents/skills/code-auditor/
