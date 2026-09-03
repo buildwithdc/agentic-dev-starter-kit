@@ -84,6 +84,9 @@ git checkout -b <branch-type>/<short-description>
 * `refactor/db-connection-pool`
 * `chore/update-dependencies`
 
+Never combine git operations into a single command.
+Never ever use "git commit --no-verify"
+
 ---
 
 ## 4. Commit Message Guidelines
