@@ -1,21 +1,42 @@
 #!/usr/bin/env python3
-"""Gemini Flash API client with JSON schema enforcement and local diff caching."""
+"""Configurable Gemini Review Client supporting Google Application Default Credentials (ADC) and Vertex AI."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import os
-import sys
+import shutil
+import subprocess
+import time
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
 
-DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
-DEFAULT_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "5.0"))
-GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+# Environment Variable Configuration Keys
+ENV_BACKEND = "GEMINI_BACKEND"
+ENV_MODEL = "GEMINI_MODEL"
+ENV_PROJECT = "GOOGLE_CLOUD_PROJECT"
+ENV_PROJECT_ALT = "GCP_PROJECT"
+ENV_LOCATION = "GOOGLE_CLOUD_LOCATION"
+ENV_LOCATION_ALT = "GCP_REGION"
+ENV_TIMEOUT = "GEMINI_TIMEOUT"
+ENV_API_KEY = "GEMINI_API_KEY"
+
+DEFAULT_BACKEND = "vertex"
+DEFAULT_MODEL = "gemini-3.7-flash"
+DEFAULT_LOCATION = "us-central1"
+DEFAULT_TIMEOUT = 5.0
+
+VERTEX_ENDPOINT_TEMPLATE = (
+    "https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/"
+    "locations/{location}/publishers/google/models/{model}:generateContent"
+)
+GOOGLE_AI_ENDPOINT_TEMPLATE = (
+    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+)
 
 REVIEW_SCHEMA: dict[str, Any] = {
     "type": "OBJECT",
@@ -78,23 +99,162 @@ class ReviewResult:
     degraded: bool = False
 
 
+@dataclass
+class GeminiClientConfig:
+    """Runtime configuration for Gemini Client."""
+
+    backend: str = DEFAULT_BACKEND
+    model: str = DEFAULT_MODEL
+    project_id: str | None = None
+    location: str = DEFAULT_LOCATION
+    timeout: float = DEFAULT_TIMEOUT
+    api_key: str | None = None
+
+    @classmethod
+    def from_env(cls) -> GeminiClientConfig:
+        """Create config populated from environment variables."""
+        return cls(
+            backend=os.getenv(ENV_BACKEND, DEFAULT_BACKEND).lower(),
+            model=os.getenv(ENV_MODEL, DEFAULT_MODEL),
+            project_id=os.getenv(ENV_PROJECT) or os.getenv(ENV_PROJECT_ALT),
+            location=os.getenv(ENV_LOCATION) or os.getenv(ENV_LOCATION_ALT, DEFAULT_LOCATION),
+            timeout=float(os.getenv(ENV_TIMEOUT, str(DEFAULT_TIMEOUT))),
+            api_key=os.getenv(ENV_API_KEY),
+        )
+
+
+def discover_gcp_project_id() -> str | None:
+    """Discover Google Cloud Project ID hierarchically."""
+    # 1. Environment variables
+    env_proj = os.getenv(ENV_PROJECT) or os.getenv(ENV_PROJECT_ALT)
+    if env_proj:
+        return env_proj.strip()
+
+    # 2. Inspect standard ADC file if present
+    adc_paths = [
+        Path(os.getenv("GOOGLE_APPLICATION_CREDENTIALS", ""))
+        if os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        else None,
+        Path.home() / ".config" / "gcloud" / "application_default_credentials.json",
+        Path(os.getenv("APPDATA", "")) / "gcloud" / "application_default_credentials.json"
+        if os.getenv("APPDATA")
+        else None,
+    ]
+    for p in adc_paths:
+        if p and p.exists():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                proj = data.get("quota_project_id") or data.get("project_id")
+                if proj:
+                    return str(proj).strip()
+            except Exception:
+                pass
+
+    # 3. Fallback to gcloud config CLI
+    if shutil.which("gcloud"):
+        try:
+            res = subprocess.run(
+                ["gcloud", "config", "get-value", "project"],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+                check=False,
+            )
+            val = res.stdout.strip()
+            if val and val != "(unset)":
+                return val
+        except Exception:
+            pass
+
+    return None
+
+
+def get_adc_access_token(cache_dir: Path | None = None) -> str | None:
+    """Acquire Google Cloud OAuth2 access token with local caching."""
+    # Check cache first
+    now = time.time()
+    cache_file = (cache_dir / "adc_token.json") if cache_dir else None
+
+    if cache_file and cache_file.exists():
+        try:
+            data = json.loads(cache_file.read_text(encoding="utf-8"))
+            if data.get("expires_at", 0) > now + 60:
+                token = data.get("token")
+                if token:
+                    return str(token)
+        except Exception:
+            pass
+
+    # 1. Try google.auth SDK if available
+    try:
+        import google.auth
+        import google.auth.transport.requests
+
+        creds, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        auth_req = google.auth.transport.requests.Request()
+        creds.refresh(auth_req)
+        token = creds.token
+        if token and cache_file:
+            try:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_file.write_text(
+                    json.dumps({"token": token, "expires_at": now + 1800}),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
+        return token
+    except Exception:
+        pass
+
+    # 2. Fallback to gcloud CLI
+    if shutil.which("gcloud"):
+        try:
+            res = subprocess.run(
+                ["gcloud", "auth", "application-default", "print-access-token"],
+                capture_output=True,
+                text=True,
+                timeout=3.0,
+                check=False,
+            )
+            token = res.stdout.strip()
+            if res.returncode == 0 and token and not token.startswith("ERROR"):
+                if cache_file:
+                    try:
+                        cache_dir.mkdir(parents=True, exist_ok=True)
+                        cache_file.write_text(
+                            json.dumps({"token": token, "expires_at": now + 1800}),
+                            encoding="utf-8",
+                        )
+                    except Exception:
+                        pass
+                return token
+        except Exception:
+            pass
+
+    return None
+
+
 class GeminiReviewClient:
-    """Client for evaluating code diffs against best-practice rules."""
+    """Client for evaluating code diffs against best-practice rules via ADC."""
 
     def __init__(
         self,
-        api_key: str | None = None,
-        model: str = DEFAULT_MODEL,
-        timeout: float = DEFAULT_TIMEOUT,
+        config: GeminiClientConfig | None = None,
         cache_dir: Path | str | None = None,
     ) -> None:
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
-        self.model = model
-        self.timeout = timeout
+        self.config = config or GeminiClientConfig.from_env()
         self.cache_dir = Path(cache_dir) if cache_dir else Path(".git/.llm_cache")
 
+        if not self.config.project_id:
+            self.config.project_id = discover_gcp_project_id()
+
     def _compute_cache_key(self, diff_text: str, rules_summary: str) -> str:
-        payload = f"{self.model}\n{rules_summary}\n{diff_text}".encode("utf-8")
+        payload = f"{self.config.backend}:{self.config.model}:{self.config.project_id}\n{rules_summary}\n{diff_text}".encode(
+            "utf-8"
+        )
         return hashlib.sha256(payload).hexdigest()
 
     def _get_cached_result(self, cache_key: str) -> ReviewResult | None:
@@ -126,13 +286,56 @@ class GeminiReviewClient:
         except Exception:
             pass
 
+    def _prepare_request(
+        self, prompt: str, token: str | None
+    ) -> tuple[str, dict[str, str], dict[str, Any]]:
+        """Construct endpoint URL, headers, and payload according to configured backend."""
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": prompt}],
+                }
+            ],
+            "generationConfig": {
+                "response_mime_type": "application/json",
+                "response_schema": REVIEW_SCHEMA,
+                "temperature": 0.1,
+            },
+        }
+
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+
+        if self.config.backend == "vertex":
+            location = self.config.location or DEFAULT_LOCATION
+            project_id = self.config.project_id or "default"
+            url = VERTEX_ENDPOINT_TEMPLATE.format(
+                location=location,
+                project_id=project_id,
+                model=self.config.model,
+            )
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+        else:
+            # Google AI Studio / Generative Language backend
+            if self.config.api_key:
+                url = f"{GOOGLE_AI_ENDPOINT_TEMPLATE.format(model=self.config.model)}?key={self.config.api_key}"
+            else:
+                url = GOOGLE_AI_ENDPOINT_TEMPLATE.format(model=self.config.model)
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                if self.config.project_id:
+                    headers["x-goog-user-project"] = self.config.project_id
+
+        return url, headers, payload
+
     def review_diff(
         self,
         diff_text: str,
         rules_text: str,
         staged_files: Sequence[str] | None = None,
     ) -> ReviewResult:
-        """Evaluate staged diff against rules using Gemini Flash."""
+        """Evaluate staged diff against rules using Gemini Flash via ADC."""
         if not diff_text.strip():
             return ReviewResult(
                 passed=True,
@@ -145,10 +348,28 @@ class GeminiReviewClient:
         if cached is not None:
             return cached
 
-        if not self.api_key:
+        # Resolve authentication
+        token: str | None = None
+        if not (self.config.backend == "google_ai" and self.config.api_key):
+            token = get_adc_access_token(self.cache_dir)
+            if not token:
+                return ReviewResult(
+                    passed=True,
+                    summary=(
+                        "Review skipped: Google ADC access token not found. "
+                        "Run 'gcloud auth application-default login' to enable LLM pre-commit checks."
+                    ),
+                    violations=[],
+                    degraded=True,
+                )
+
+        if self.config.backend == "vertex" and not self.config.project_id:
             return ReviewResult(
                 passed=True,
-                summary="Review skipped: GEMINI_API_KEY is unset. Fallback to local checks.",
+                summary=(
+                    "Review skipped: GCP Project ID could not be determined for Vertex AI. "
+                    "Set GOOGLE_CLOUD_PROJECT or run 'gcloud config set project <PROJECT_ID>'."
+                ),
                 violations=[],
                 degraded=True,
             )
@@ -167,29 +388,17 @@ class GeminiReviewClient:
             "4. Return strictly valid JSON adhering to the provided schema."
         )
 
-        url = f"{GEMINI_API_ENDPOINT.format(model=self.model)}?key={self.api_key}"
-        payload = {
-            "contents": [
-                {
-                    "parts": [{"text": prompt}],
-                }
-            ],
-            "generationConfig": {
-                "response_mime_type": "application/json",
-                "response_schema": REVIEW_SCHEMA,
-                "temperature": 0.1,
-            },
-        }
+        url, headers, payload = self._prepare_request(prompt, token)
 
         req = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
                 resp_data = json.loads(resp.read().decode("utf-8"))
                 candidate = resp_data.get("candidates", [{}])[0]
                 text = (
@@ -213,7 +422,6 @@ class GeminiReviewClient:
                     for v in raw_json.get("violations", [])
                 ]
 
-                # If there are any CRITICAL or ERROR violations, passed is false
                 hard_failures = [v for v in violations if v.severity in ("CRITICAL", "ERROR")]
                 passed = raw_json.get("passed", True) and len(hard_failures) == 0
 

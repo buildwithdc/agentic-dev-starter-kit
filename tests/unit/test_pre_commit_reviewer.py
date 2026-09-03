@@ -1,38 +1,109 @@
 #!/usr/bin/env python3
-"""Unit tests for pre-commit reviewer and Gemini client."""
+"""Unit tests for pre-commit reviewer and Gemini ADC client."""
 
+import json
 import os
 import tempfile
+import time
 import unittest
-from unittest.mock import MagicMock, patch
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-from scripts.gemini_client import GeminiReviewClient, ReviewResult, ReviewViolation
+from scripts.gemini_client import (
+    GeminiClientConfig,
+    GeminiReviewClient,
+    ReviewResult,
+    ReviewViolation,
+    discover_gcp_project_id,
+    get_adc_access_token,
+)
 from scripts.pre_commit_reviewer import is_git_rebasing, run_review
 from scripts.rule_loader import Rule
 
 
-class TestGeminiClientAndReviewer(unittest.TestCase):
+class TestGeminiADCClientAndReviewer(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.cache_dir = Path(self.temp_dir.name) / "cache"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_client_degraded_when_no_api_key(self) -> None:
-        client = GeminiReviewClient(api_key="", cache_dir=self.cache_dir)
-        res = client.review_diff(
-            diff_text="+ print('hello')",
-            rules_text="No plaintext secrets",
-            staged_files=["main.py"],
-        )
-        self.assertTrue(res.passed)
-        self.assertTrue(res.degraded)
-        self.assertIn("GEMINI_API_KEY is unset", res.summary)
+    def test_config_from_env(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "GEMINI_BACKEND": "google_ai",
+                "GEMINI_MODEL": "gemini-1.5-pro",
+                "GOOGLE_CLOUD_PROJECT": "my-test-project",
+                "GOOGLE_CLOUD_LOCATION": "asia-east1",
+            },
+        ):
+            cfg = GeminiClientConfig.from_env()
+            self.assertEqual(cfg.backend, "google_ai")
+            self.assertEqual(cfg.model, "gemini-1.5-pro")
+            self.assertEqual(cfg.project_id, "my-test-project")
+            self.assertEqual(cfg.location, "asia-east1")
 
-    def test_client_caching(self) -> None:
-        client = GeminiReviewClient(api_key="fake-key", cache_dir=self.cache_dir)
+    def test_project_id_discovery_from_env(self) -> None:
+        with patch.dict(os.environ, {"GOOGLE_CLOUD_PROJECT": "env-project-123"}):
+            self.assertEqual(discover_gcp_project_id(), "env-project-123")
+
+    def test_adc_token_caching(self) -> None:
+        cache_file = self.cache_dir / "adc_token.json"
+        cache_file.write_text(
+            json.dumps({"token": "cached-token-abc", "expires_at": time.time() + 1000}),
+            encoding="utf-8",
+        )
+        token = get_adc_access_token(self.cache_dir)
+        self.assertEqual(token, "cached-token-abc")
+
+    def test_client_degraded_when_no_adc_token(self) -> None:
+        with patch("scripts.gemini_client.get_adc_access_token", return_value=None):
+            cfg = GeminiClientConfig(backend="vertex", project_id="test-proj")
+            client = GeminiReviewClient(config=cfg, cache_dir=self.cache_dir)
+            res = client.review_diff(
+                diff_text="+ print('hello')",
+                rules_text="No plaintext secrets",
+                staged_files=["main.py"],
+            )
+            self.assertTrue(res.passed)
+            self.assertTrue(res.degraded)
+            self.assertIn("Google ADC access token not found", res.summary)
+
+    def test_vertex_ai_request_preparation(self) -> None:
+        cfg = GeminiClientConfig(
+            backend="vertex",
+            model="gemini-2.5-flash",
+            project_id="test-proj-456",
+            location="us-central1",
+        )
+        client = GeminiReviewClient(config=cfg, cache_dir=self.cache_dir)
+        url, headers, payload = client._prepare_request(
+            prompt="check diff", token="mock-bearer-token"
+        )
+        self.assertIn("us-central1-aiplatform.googleapis.com", url)
+        self.assertIn("projects/test-proj-456", url)
+        self.assertEqual(headers.get("Authorization"), "Bearer mock-bearer-token")
+
+    def test_google_ai_request_preparation_with_adc(self) -> None:
+        cfg = GeminiClientConfig(
+            backend="google_ai",
+            model="gemini-2.5-flash",
+            project_id="test-proj-456",
+        )
+        client = GeminiReviewClient(config=cfg, cache_dir=self.cache_dir)
+        url, headers, payload = client._prepare_request(
+            prompt="check diff", token="mock-bearer-token"
+        )
+        self.assertIn("generativelanguage.googleapis.com", url)
+        self.assertEqual(headers.get("Authorization"), "Bearer mock-bearer-token")
+        self.assertEqual(headers.get("x-goog-user-project"), "test-proj-456")
+
+    def test_client_diff_caching(self) -> None:
+        cfg = GeminiClientConfig(backend="vertex", project_id="test-proj")
+        client = GeminiReviewClient(config=cfg, cache_dir=self.cache_dir)
         mock_result = ReviewResult(
             passed=True,
             summary="All good",
@@ -108,7 +179,6 @@ class TestGeminiClientAndReviewer(unittest.TestCase):
         mock_client_cls.return_value = mock_instance
 
         exit_code = run_review()
-        # Non-blocking -> exit 0
         self.assertEqual(exit_code, 0)
 
     @patch("scripts.pre_commit_reviewer.GeminiReviewClient")
@@ -145,7 +215,6 @@ class TestGeminiClientAndReviewer(unittest.TestCase):
         mock_client_cls.return_value = mock_instance
 
         exit_code = run_review()
-        # Blocking -> exit 1
         self.assertEqual(exit_code, 1)
 
     def test_rebase_detection_and_bypass_env(self) -> None:

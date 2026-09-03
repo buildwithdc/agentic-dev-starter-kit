@@ -15,7 +15,12 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from gemini_client import GeminiReviewClient, ReviewResult, ReviewViolation
+from gemini_client import (
+    GeminiClientConfig,
+    GeminiReviewClient,
+    ReviewResult,
+    ReviewViolation,
+)
 from rule_loader import Rule, load_rules, match_rules_for_files
 
 # ANSI Terminal Colors
@@ -106,7 +111,7 @@ def print_review_report(result: ReviewResult) -> None:
     print(f"\n{BOLD}{CYAN}=== Pre-Commit LLM Best-Practices Review ==={RESET}")
 
     if result.degraded:
-        print(f"{YELLOW}[WARNING: MOCK/DEGRADED RUN: {result.summary}]{RESET}")
+        print(f"{YELLOW}[NOTICE: {result.summary}]{RESET}")
         return
 
     if result.cached:
@@ -140,6 +145,7 @@ def print_review_report(result: ReviewResult) -> None:
 def run_review(
     rules_dir: Path | str = ".agents/rules",
     skip_llm: bool = False,
+    config: GeminiClientConfig | None = None,
 ) -> int:
     """Execute pre-commit review workflow."""
     # 1. Check bypass flag
@@ -178,7 +184,7 @@ def run_review(
     )
 
     # 5. Call review client
-    client = GeminiReviewClient()
+    client = GeminiReviewClient(config=config)
     result = client.review_diff(
         diff_text=diff_text,
         rules_text=rules_summary,
@@ -220,8 +226,41 @@ def main() -> None:
         action="store_true",
         help="Skip LLM evaluation and allow commit",
     )
+    parser.add_argument(
+        "--backend",
+        choices=["vertex", "google_ai"],
+        default=None,
+        help="Backend to use: 'vertex' (default) or 'google_ai'",
+    )
+    parser.add_argument(
+        "--project",
+        default=None,
+        help="Google Cloud Project ID (defaults to GOOGLE_CLOUD_PROJECT or ADC default)",
+    )
+    parser.add_argument(
+        "--location",
+        default=None,
+        help="Google Cloud Location for Vertex AI (default: us-central1)",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Model name (default: gemini-2.5-flash)",
+    )
+
     args = parser.parse_args()
-    sys.exit(run_review(rules_dir=args.rules_dir, skip_llm=args.skip_llm))
+
+    cfg = GeminiClientConfig.from_env()
+    if args.backend:
+        cfg.backend = args.backend
+    if args.project:
+        cfg.project_id = args.project
+    if args.location:
+        cfg.location = args.location
+    if args.model:
+        cfg.model = args.model
+
+    sys.exit(run_review(rules_dir=args.rules_dir, skip_llm=args.skip_llm, config=cfg))
 
 
 if __name__ == "__main__":
