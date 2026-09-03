@@ -8,7 +8,9 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+
 
 # Add script directory to sys.path for local module resolution
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -76,6 +78,41 @@ def get_staged_diff() -> str:
         return res.stdout
     except Exception:
         return ""
+
+
+DEFAULT_AUDIT_LOG_PATH = Path(".agents/audit.log")
+
+
+def get_current_commit_hash() -> str:
+    """Retrieve the current HEAD commit hash if available."""
+    try:
+        res = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return res.stdout.strip()
+    except Exception:
+        return "UNKNOWN"
+
+
+def log_audit_entry(
+    decision: str,
+    commit_hash: str | None = None,
+    audit_file: Path | str = DEFAULT_AUDIT_LOG_PATH,
+) -> None:
+    """Record a brief audit entry with timestamp, commit hash, and final decision."""
+    try:
+        path = Path(audit_file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        resolved_commit = commit_hash or get_current_commit_hash()
+        timestamp = datetime.now(timezone.utc).isoformat()
+        entry = f"{timestamp} | commit: {resolved_commit} | decision: {decision}\n"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(entry)
+    except Exception:
+        pass
 
 
 def run_local_static_fallback() -> bool:
@@ -146,16 +183,19 @@ def run_review(
     rules_dir: Path | str = ".agents/rules",
     skip_llm: bool = False,
     config: GeminiClientConfig | None = None,
+    audit_file: Path | str = DEFAULT_AUDIT_LOG_PATH,
 ) -> int:
     """Execute pre-commit review workflow."""
     # 1. Check bypass flag
     if skip_llm or os.getenv("SKIP_LLM_HOOK") == "1":
         print(f"{CYAN}Pre-commit review skipped via SKIP_LLM_HOOK.{RESET}")
+        log_audit_entry("SKIPPED (BYPASS)", audit_file=audit_file)
         return 0
 
     # 2. Check rebase status
     if is_git_rebasing():
         print(f"{CYAN}Git rebase/cherry-pick detected. Fast-tracking pre-commit review.{RESET}")
+        log_audit_entry("SKIPPED (REBASE)", audit_file=audit_file)
         return 0
 
     # 3. Get staged files
@@ -171,11 +211,13 @@ def run_review(
     all_rules = load_rules(rules_dir)
     if not all_rules:
         # No rules configured
+        log_audit_entry("PASSED (NO_RULES)", audit_file=audit_file)
         return 0
 
     matched_rules = match_rules_for_files(all_rules, staged_files)
     if not matched_rules:
         # No applicable rules for changed files
+        log_audit_entry("PASSED (NO_MATCHED_RULES)", audit_file=audit_file)
         return 0
 
     rules_summary = "\n\n".join(
@@ -196,6 +238,7 @@ def run_review(
 
     if result.degraded:
         run_local_static_fallback()
+        log_audit_entry("PASSED (DEGRADED)", audit_file=audit_file)
         return 0
 
     # Two-Tier Gating Policy:
@@ -209,8 +252,10 @@ def run_review(
         print(
             f"\n{RED}Please resolve the critical/error violations above, stage your changes, and re-commit.{RESET}\n"
         )
+        log_audit_entry("BLOCKED", audit_file=audit_file)
         return 1
 
+    log_audit_entry("PASSED", audit_file=audit_file)
     return 0
 
 
@@ -247,6 +292,11 @@ def main() -> None:
         default=None,
         help="Model name (default: gemini-2.5-flash)",
     )
+    parser.add_argument(
+        "--audit-file",
+        default=str(DEFAULT_AUDIT_LOG_PATH),
+        help="Path to local audit log file (default: .agents/audit.log)",
+    )
 
     args = parser.parse_args()
 
@@ -260,7 +310,14 @@ def main() -> None:
     if args.model:
         cfg.model = args.model
 
-    sys.exit(run_review(rules_dir=args.rules_dir, skip_llm=args.skip_llm, config=cfg))
+    sys.exit(
+        run_review(
+            rules_dir=args.rules_dir,
+            skip_llm=args.skip_llm,
+            config=cfg,
+            audit_file=args.audit_file,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -22,8 +22,12 @@ CLAUDE.md
 .claude/
 .agents/hooks.json
 .agents/skills/code-auditor/
-
 # Distribution and packaging archives
 dist/
 *.zip
+
+# Local audit and execution logs
+.agents/*.log
+*.log
+
 

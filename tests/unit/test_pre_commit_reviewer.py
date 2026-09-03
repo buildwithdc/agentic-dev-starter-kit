@@ -17,7 +17,12 @@ from scripts.gemini_client import (
     discover_gcp_project_id,
     get_adc_access_token,
 )
-from scripts.pre_commit_reviewer import is_git_rebasing, run_review
+from scripts.pre_commit_reviewer import (
+    get_current_commit_hash,
+    is_git_rebasing,
+    log_audit_entry,
+    run_review,
+)
 from scripts.rule_loader import Rule
 
 
@@ -117,11 +122,12 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
         self.assertTrue(cached.passed)
         self.assertTrue(cached.cached)
 
+    @patch("scripts.pre_commit_reviewer.is_git_rebasing", return_value=False)
     @patch("scripts.pre_commit_reviewer.GeminiReviewClient")
     @patch("scripts.pre_commit_reviewer.load_rules")
     @patch("scripts.pre_commit_reviewer.get_staged_diff")
     @patch("scripts.pre_commit_reviewer.get_staged_files")
-    def test_run_review_pass(self, mock_files, mock_diff, mock_load, mock_client_cls) -> None:
+    def test_run_review_pass(self, mock_files, mock_diff, mock_load, mock_client_cls, mock_rebasing) -> None:
         mock_files.return_value = ["src/main.py"]
         mock_diff.return_value = "+ def hello(): pass"
         rule = Rule(
@@ -145,11 +151,12 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
         exit_code = run_review()
         self.assertEqual(exit_code, 0)
 
+    @patch("scripts.pre_commit_reviewer.is_git_rebasing", return_value=False)
     @patch("scripts.pre_commit_reviewer.GeminiReviewClient")
     @patch("scripts.pre_commit_reviewer.load_rules")
     @patch("scripts.pre_commit_reviewer.get_staged_diff")
     @patch("scripts.pre_commit_reviewer.get_staged_files")
-    def test_run_review_warn_is_non_blocking(self, mock_files, mock_diff, mock_load, mock_client_cls) -> None:
+    def test_run_review_warn_is_non_blocking(self, mock_files, mock_diff, mock_load, mock_client_cls, mock_rebasing) -> None:
         mock_files.return_value = ["src/main.py"]
         mock_diff.return_value = "+ def hello(): pass"
         rule = Rule(
@@ -181,11 +188,12 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
         exit_code = run_review()
         self.assertEqual(exit_code, 0)
 
+    @patch("scripts.pre_commit_reviewer.is_git_rebasing", return_value=False)
     @patch("scripts.pre_commit_reviewer.GeminiReviewClient")
     @patch("scripts.pre_commit_reviewer.load_rules")
     @patch("scripts.pre_commit_reviewer.get_staged_diff")
     @patch("scripts.pre_commit_reviewer.get_staged_files")
-    def test_run_review_error_and_critical_block_commit(self, mock_files, mock_diff, mock_load, mock_client_cls) -> None:
+    def test_run_review_error_and_critical_block_commit(self, mock_files, mock_diff, mock_load, mock_client_cls, mock_rebasing) -> None:
         mock_files.return_value = ["src/main.py"]
         mock_diff.return_value = "+ API_KEY = 'secret'"
         rule = Rule(
@@ -225,6 +233,53 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
             self.assertTrue(is_git_rebasing())
             self.assertEqual(run_review(), 0)
 
+    def test_get_current_commit_hash(self) -> None:
+        hash_val = get_current_commit_hash()
+        self.assertIsInstance(hash_val, str)
+        self.assertTrue(len(hash_val) > 0)
+
+    def test_log_audit_entry(self) -> None:
+        audit_file = Path(self.temp_dir.name) / "test_audit.log"
+        log_audit_entry("PASSED", commit_hash="abcdef123456", audit_file=audit_file)
+        self.assertTrue(audit_file.exists())
+        content = audit_file.read_text(encoding="utf-8")
+        self.assertIn("commit: abcdef123456", content)
+        self.assertIn("decision: PASSED", content)
+
+    @patch("scripts.pre_commit_reviewer.is_git_rebasing", return_value=False)
+    @patch("scripts.pre_commit_reviewer.GeminiReviewClient")
+    @patch("scripts.pre_commit_reviewer.load_rules")
+    @patch("scripts.pre_commit_reviewer.get_staged_diff")
+    @patch("scripts.pre_commit_reviewer.get_staged_files")
+    def test_run_review_writes_audit_log(self, mock_files, mock_diff, mock_load, mock_client_cls, mock_rebasing) -> None:
+        audit_file = Path(self.temp_dir.name) / "review_audit.log"
+        mock_files.return_value = ["src/main.py"]
+        mock_diff.return_value = "+ def hello(): pass"
+        rule = Rule(
+            id="rule-code-quality",
+            title="Code Quality",
+            severity_default="WARN",
+            applies_to=["**/*.py"],
+            content="Write typed code.",
+        )
+        mock_load.return_value = [rule]
+        mock_instance = MagicMock()
+        mock_instance.review_diff.return_value = ReviewResult(
+            passed=True,
+            summary="Pass",
+            violations=[],
+            degraded=False,
+        )
+        mock_client_cls.return_value = mock_instance
+
+        exit_code = run_review(audit_file=audit_file)
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(audit_file.exists())
+        content = audit_file.read_text(encoding="utf-8")
+        self.assertIn("decision: PASSED", content)
+        self.assertIn("commit: ", content)
+
 
 if __name__ == "__main__":
     unittest.main()
+
