@@ -10,6 +10,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from scripts.gemini_client import (
+    DEFAULT_LOCATION,
+    DEFAULT_MODEL,
     GeminiClientConfig,
     GeminiReviewClient,
     ReviewResult,
@@ -80,7 +82,7 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
     def test_vertex_ai_request_preparation(self) -> None:
         cfg = GeminiClientConfig(
             backend="vertex",
-            model="gemini-3.7-flash",
+            model=DEFAULT_MODEL,
             project_id="test-proj-456",
             location="us-central1",
         )
@@ -90,12 +92,13 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
         )
         self.assertIn("us-central1-aiplatform.googleapis.com", url)
         self.assertIn("projects/test-proj-456", url)
+        self.assertIn(f"models/{DEFAULT_MODEL}:generateContent", url)
         self.assertEqual(headers.get("Authorization"), "Bearer mock-bearer-token")
 
     def test_vertex_ai_global_request_preparation(self) -> None:
         cfg = GeminiClientConfig(
             backend="vertex",
-            model="gemini-3.7-flash",
+            model=DEFAULT_MODEL,
             project_id="test-proj-456",
             location="global",
         )
@@ -105,14 +108,14 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
         )
         self.assertEqual(
             url,
-            "https://aiplatform.googleapis.com/v1/projects/test-proj-456/locations/global/publishers/google/models/gemini-3.7-flash:generateContent",
+            f"https://aiplatform.googleapis.com/v1/projects/test-proj-456/locations/global/publishers/google/models/{DEFAULT_MODEL}:generateContent",
         )
         self.assertEqual(headers.get("Authorization"), "Bearer mock-bearer-token")
 
     def test_google_ai_request_preparation_with_adc(self) -> None:
         cfg = GeminiClientConfig(
             backend="google_ai",
-            model="gemini-3.7-flash",
+            model=DEFAULT_MODEL,
             project_id="test-proj-456",
         )
         client = GeminiReviewClient(config=cfg, cache_dir=self.cache_dir)
@@ -120,11 +123,14 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
             prompt="check diff", token="mock-bearer-token"
         )
         self.assertIn("generativelanguage.googleapis.com", url)
+        self.assertIn(f"models/{DEFAULT_MODEL}:generateContent", url)
         self.assertEqual(headers.get("Authorization"), "Bearer mock-bearer-token")
         self.assertEqual(headers.get("x-goog-user-project"), "test-proj-456")
 
-    def test_default_timeout(self) -> None:
+    def test_default_config_values(self) -> None:
         cfg = GeminiClientConfig()
+        self.assertEqual(cfg.model, DEFAULT_MODEL)
+        self.assertEqual(cfg.location, DEFAULT_LOCATION)
         self.assertEqual(cfg.timeout, 30.0)
 
     def test_auth_fallback_to_adc_when_api_key_unset(self) -> None:
