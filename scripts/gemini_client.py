@@ -29,12 +29,16 @@ ENV_API_KEY = "GEMINI_API_KEY"
 
 DEFAULT_BACKEND = "vertex"
 DEFAULT_MODEL = "gemini-3.7-flash"
-DEFAULT_LOCATION = "us-central1"
+DEFAULT_LOCATION = "global"
 DEFAULT_TIMEOUT = 30.0
 
 VERTEX_ENDPOINT_TEMPLATE = (
     "https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/"
     "locations/{location}/publishers/google/models/{model}:generateContent"
+)
+VERTEX_GLOBAL_ENDPOINT_TEMPLATE = (
+    "https://aiplatform.googleapis.com/v1/projects/{project_id}/"
+    "locations/global/publishers/google/models/{model}:generateContent"
 )
 GOOGLE_AI_ENDPOINT_TEMPLATE = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -320,11 +324,17 @@ class GeminiReviewClient:
         if self.config.backend == "vertex":
             location = self.config.location or DEFAULT_LOCATION
             project_id = self.config.project_id or "default"
-            url = VERTEX_ENDPOINT_TEMPLATE.format(
-                location=location,
-                project_id=project_id,
-                model=self.config.model,
-            )
+            if location == "global":
+                url = VERTEX_GLOBAL_ENDPOINT_TEMPLATE.format(
+                    project_id=project_id,
+                    model=self.config.model,
+                )
+            else:
+                url = VERTEX_ENDPOINT_TEMPLATE.format(
+                    location=location,
+                    project_id=project_id,
+                    model=self.config.model,
+                )
             if token:
                 headers["Authorization"] = f"Bearer {token}"
         else:

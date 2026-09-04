@@ -92,6 +92,23 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
         self.assertIn("projects/test-proj-456", url)
         self.assertEqual(headers.get("Authorization"), "Bearer mock-bearer-token")
 
+    def test_vertex_ai_global_request_preparation(self) -> None:
+        cfg = GeminiClientConfig(
+            backend="vertex",
+            model="gemini-3.7-flash",
+            project_id="test-proj-456",
+            location="global",
+        )
+        client = GeminiReviewClient(config=cfg, cache_dir=self.cache_dir)
+        url, headers, payload = client._prepare_request(
+            prompt="check diff", token="mock-bearer-token"
+        )
+        self.assertEqual(
+            url,
+            "https://aiplatform.googleapis.com/v1/projects/test-proj-456/locations/global/publishers/google/models/gemini-3.7-flash:generateContent",
+        )
+        self.assertEqual(headers.get("Authorization"), "Bearer mock-bearer-token")
+
     def test_google_ai_request_preparation_with_adc(self) -> None:
         cfg = GeminiClientConfig(
             backend="google_ai",
