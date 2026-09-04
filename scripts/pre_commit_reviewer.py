@@ -290,7 +290,7 @@ def main() -> None:
     parser.add_argument(
         "--model",
         default=None,
-        help="Model name (default: gemini-2.5-flash)",
+        help="Model name (default: gemini-3.7-flash)",
     )
     parser.add_argument(
         "--audit-file",

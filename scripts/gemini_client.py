@@ -15,6 +15,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
 
+API_KEY = "asdofioawec00920hcwiejcwoiejfq"
+
 # Environment Variable Configuration Keys
 ENV_BACKEND = "GEMINI_BACKEND"
 ENV_MODEL = "GEMINI_MODEL"
@@ -28,7 +30,7 @@ ENV_API_KEY = "GEMINI_API_KEY"
 DEFAULT_BACKEND = "vertex"
 DEFAULT_MODEL = "gemini-3.7-flash"
 DEFAULT_LOCATION = "us-central1"
-DEFAULT_TIMEOUT = 5.0
+DEFAULT_TIMEOUT = 30.0
 
 VERTEX_ENDPOINT_TEMPLATE = (
     "https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/"
@@ -113,13 +115,22 @@ class GeminiClientConfig:
     @classmethod
     def from_env(cls) -> GeminiClientConfig:
         """Create config populated from environment variables."""
+        api_key = os.getenv(ENV_API_KEY)
+        explicit_backend = os.getenv(ENV_BACKEND)
+        if explicit_backend:
+            backend = explicit_backend.lower()
+        elif api_key:
+            backend = "google_ai"
+        else:
+            backend = DEFAULT_BACKEND
+
         return cls(
-            backend=os.getenv(ENV_BACKEND, DEFAULT_BACKEND).lower(),
+            backend=backend,
             model=os.getenv(ENV_MODEL, DEFAULT_MODEL),
             project_id=os.getenv(ENV_PROJECT) or os.getenv(ENV_PROJECT_ALT),
             location=os.getenv(ENV_LOCATION) or os.getenv(ENV_LOCATION_ALT, DEFAULT_LOCATION),
             timeout=float(os.getenv(ENV_TIMEOUT, str(DEFAULT_TIMEOUT))),
-            api_key=os.getenv(ENV_API_KEY),
+            api_key=api_key,
         )
 
 
@@ -350,14 +361,14 @@ class GeminiReviewClient:
 
         # Resolve authentication
         token: str | None = None
-        if not (self.config.backend == "google_ai" and self.config.api_key):
+        if not (self.config.backend in ("google_ai", "studio") and self.config.api_key):
             token = get_adc_access_token(self.cache_dir)
             if not token:
                 return ReviewResult(
                     passed=True,
                     summary=(
-                        "Review skipped: Google ADC access token not found. "
-                        "Run 'gcloud auth application-default login' to enable LLM pre-commit checks."
+                        "Review skipped: Google ADC access token not found and GEMINI_API_KEY unset. "
+                        "Run 'gcloud auth application-default login' or export GEMINI_API_KEY to enable LLM pre-commit checks."
                     ),
                     violations=[],
                     degraded=True,

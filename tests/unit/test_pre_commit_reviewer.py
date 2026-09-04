@@ -80,7 +80,7 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
     def test_vertex_ai_request_preparation(self) -> None:
         cfg = GeminiClientConfig(
             backend="vertex",
-            model="gemini-2.5-flash",
+            model="gemini-3.7-flash",
             project_id="test-proj-456",
             location="us-central1",
         )
@@ -95,7 +95,7 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
     def test_google_ai_request_preparation_with_adc(self) -> None:
         cfg = GeminiClientConfig(
             backend="google_ai",
-            model="gemini-2.5-flash",
+            model="gemini-3.7-flash",
             project_id="test-proj-456",
         )
         client = GeminiReviewClient(config=cfg, cache_dir=self.cache_dir)
@@ -105,6 +105,60 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
         self.assertIn("generativelanguage.googleapis.com", url)
         self.assertEqual(headers.get("Authorization"), "Bearer mock-bearer-token")
         self.assertEqual(headers.get("x-goog-user-project"), "test-proj-456")
+
+    def test_default_timeout(self) -> None:
+        cfg = GeminiClientConfig()
+        self.assertEqual(cfg.timeout, 30.0)
+
+    def test_auth_fallback_to_adc_when_api_key_unset(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            cfg = GeminiClientConfig.from_env()
+            self.assertEqual(cfg.backend, "vertex")
+            self.assertIsNone(cfg.api_key)
+
+        with patch("scripts.gemini_client.get_adc_access_token", return_value="mock-adc-token"), patch(
+            "urllib.request.urlopen"
+        ) as mock_urlopen:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = json.dumps(
+                {"candidates": [{"content": {"parts": [{"text": json.dumps({"passed": True, "violations": []})}]}}]}
+            ).encode("utf-8")
+            mock_resp.__enter__.return_value = mock_resp
+            mock_urlopen.return_value = mock_resp
+
+            cfg = GeminiClientConfig(backend="vertex", project_id="test-proj")
+            client = GeminiReviewClient(config=cfg, cache_dir=self.cache_dir)
+            res = client.review_diff(
+                diff_text="+ def foo(): pass",
+                rules_text="No rules broken",
+                staged_files=["app.py"],
+            )
+            self.assertTrue(res.passed)
+            self.assertFalse(res.degraded)
+
+    def test_auth_uses_api_key_when_provided(self) -> None:
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "secret-key-123"}, clear=True):
+            cfg = GeminiClientConfig.from_env()
+            self.assertEqual(cfg.backend, "google_ai")
+            self.assertEqual(cfg.api_key, "secret-key-123")
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = json.dumps(
+                {"candidates": [{"content": {"parts": [{"text": json.dumps({"passed": True, "violations": []})}]}}]}
+            ).encode("utf-8")
+            mock_resp.__enter__.return_value = mock_resp
+            mock_urlopen.return_value = mock_resp
+
+            cfg = GeminiClientConfig(backend="google_ai", api_key="secret-key-123")
+            client = GeminiReviewClient(config=cfg, cache_dir=self.cache_dir)
+            res = client.review_diff(
+                diff_text="+ def foo(): pass",
+                rules_text="No rules broken",
+                staged_files=["app.py"],
+            )
+            self.assertTrue(res.passed)
+            self.assertFalse(res.degraded)
 
     def test_client_diff_caching(self) -> None:
         cfg = GeminiClientConfig(backend="vertex", project_id="test-proj")
