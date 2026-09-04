@@ -119,7 +119,9 @@ tags:
    - Scans `.agents/rules/*.md`.
    - Parses YAML frontmatter and extracts rules matching the file extensions and paths in the staged diff.
 2. `scripts/gemini_client.py`:
-   - Lightweight, zero-extra-dependency client for Gemini Flash API (`gemini-3.7-flash`).
+   - Configurable review client supporting Google Application Default Credentials (ADC) with automatic token discovery and caching (`.git/.llm_cache/adc_token.json`), defaulting to `gemini-3.7-flash`.
+   - Supports Vertex AI (default: `https://{location}-aiplatform.googleapis.com`) and Google AI Studio (`https://generativelanguage.googleapis.com`) backends via `GEMINI_BACKEND`.
+   - Hierarchical GCP project discovery (`GOOGLE_CLOUD_PROJECT`, ADC credentials file, `gcloud config`).
    - Implements strict JSON schema validation.
    - Implements local SHA-256 diff caching (`.git/.llm_cache`) to avoid redundant API calls if staged files haven't changed.
 3. `scripts/pre_commit_reviewer.py`:
@@ -128,7 +130,7 @@ tags:
      - Automatically skips or fast-tracks review if `SKIP_LLM_HOOK=1` is set or if Git is in an interactive rebase / cherry-pick (`GIT_REFLOG_ACTION` contains `rebase` / `cherry-pick`).
    - **Offline & Graceful Degradation**:
      - Enforces a 5-second API request timeout.
-     - If `GEMINI_API_KEY` is missing or the network is unreachable, it logs a prominent warning (`[WARNING: LLM Review skipped - network offline or GEMINI_API_KEY unset]`), runs deterministic local static checks (e.g., `ruff check`), and exits 0 to avoid blocking developer commits offline.
+     - If Google ADC credentials/tokens are missing or the network is unreachable, it logs a prominent notice (`[NOTICE: Review skipped: Google ADC access token not found...]`), runs deterministic local static checks (e.g., `ruff check`), and exits 0 to avoid blocking developer commits offline.
    - Extracts staged diffs (`git diff --cached --unified=3`).
    - Evaluates compliance against active rules.
    - **Two-Tier Gating Policy**:
