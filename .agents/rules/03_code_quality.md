@@ -30,3 +30,8 @@ tags:
 
 ## 4. Documentation Integrity
 - Preserve existing comments, docstrings, and type hints unrelated to the specific changes being made.
+
+## 5. Autonomous Runtime Issue Resolution & Approval Boundaries
+- **Autonomous Low-Impact Fixes**: Assistants are authorized and expected to autonomously diagnose and resolve runtime errors, exceptions, typing defects, and edge cases when the fix introduces no significant alterations to user journeys, UX workflows, or core business logic.
+- **Mandatory Approval for Significant Changes**: If resolving a runtime issue requires significant functional changes (modifying business logic, user interaction flows, or public contracts) or significant non-functional changes (architectural redesigns, library/framework replacements, data storage overhauls, security model adjustments, or performance trade-offs), the assistant must halt, explain the trade-offs, and obtain explicit user approval before proceeding.
+
