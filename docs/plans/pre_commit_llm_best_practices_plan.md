@@ -119,7 +119,7 @@ tags:
    - Scans `.agents/rules/*.md`.
    - Parses YAML frontmatter and extracts rules matching the file extensions and paths in the staged diff.
 2. `scripts/gemini_client.py`:
-   - Lightweight, zero-extra-dependency client for Gemini Flash API (`gemini-2.5-flash`).
+   - Lightweight, zero-extra-dependency client for Gemini Flash API (`gemini-3.7-flash`).
    - Implements strict JSON schema validation.
    - Implements local SHA-256 diff caching (`.git/.llm_cache`) to avoid redundant API calls if staged files haven't changed.
 3. `scripts/pre_commit_reviewer.py`:
