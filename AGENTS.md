@@ -53,6 +53,10 @@ Every development session and AI assistant interaction must adhere to these foun
 * **Strictly Prohibited in Version Control**: Plaintext API tokens, private keys, database passwords, or production credentials.
 * **Secrets Handling**: Load secrets dynamically through environment variables or a secure secret manager (e.g., Google Cloud Secret Manager, AWS Secrets Manager, Vault).
 
+### Rule 7: Autonomous Runtime Issue Resolution & Approval Boundaries
+* **Autonomous Low-Impact Fixes**: The AI agent is authorized and encouraged to autonomously diagnose and resolve runtime errors, exceptions, typing mismatches, and unexpected bugs when the fix requires **no significant changes to user journeys, UX workflows, or core business logic**.
+* **Mandatory User Approval for Significant Changes**: If resolving a runtime issue necessitates **significant functional changes** (altering business logic, user interaction flows, or public contracts) or **significant non-functional changes** (architectural redesigns, dependency/framework swaps, database schema alterations, security model changes, or performance trade-offs), the AI agent **MUST halt, present the proposed approach and trade-offs to the user, and obtain explicit approval before applying the changes**.
+
 ---
 
 ## 3. Branching Strategy & Naming Conventions
