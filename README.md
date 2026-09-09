@@ -9,10 +9,11 @@ A vendor-neutral, portable **Agentic Development Environment** designed for seam
 
 This repository provides:
 1. **A Single Canonical Best-Practices Store** (`.agents/rules/`): Pure Markdown rules with YAML frontmatter.
-2. **A Dynamic Multi-Assistant Installer** (`scripts/install_tooling.py`): Zero repository clutter; generates Git hooks, Antigravity skills/hooks, and Claude Code commands on demand.
-3. **A Universal Pre-Commit Review Engine** (`scripts/pre_commit_reviewer.py` & `scripts/gemini_client.py`): Gemini 3.7 Flash powered diff evaluation supporting Google Application Default Credentials (ADC) and Google AI Studio, with SHA-256 diff caching and a two-tier severity gating policy.
-4. **Autonomous Agent Self-Healing**: Hard violations (`ERROR` / `CRITICAL`) block commits and emit actionable structured diagnostics for hands-free remediation.
-5. **Portable Standalone Distribution** (`scripts/package_tooling.py`): One-command packaging and extraction into any target repository.
+2. **Dynamic Multi-Assistant Tooling & Skills** (`scripts/install_tooling.py`): Zero repository clutter; generates Git hooks, Antigravity skills/hooks, and Claude Code commands on demand.
+3. **Continuous Workflow Adaptation & Preference Persistence** (`scripts/preference_manager.py` & `.agents/rules/05_personal_preferences.md`): Captures developer habits and workflow-level feedback into persistent rules, with strict mandatory human confirmation before recording.
+4. **A Universal Pre-Commit Review Engine** (`scripts/pre_commit_reviewer.py` & `scripts/gemini_client.py`): Gemini 3.7 Flash powered diff evaluation supporting Google Application Default Credentials (ADC) and Google AI Studio, with SHA-256 diff caching and a two-tier severity gating policy.
+5. **Autonomous Agent Self-Healing**: Hard violations (`ERROR` / `CRITICAL`) block commits and emit actionable structured diagnostics for hands-free remediation.
+6. **Portable Standalone Distribution** (`scripts/package_tooling.py`): One-command packaging and extraction into any target repository.
 
 ---
 
@@ -82,6 +83,18 @@ sequenceDiagram
 
 ---
 
+## Core Guiding Principles
+
+This project is guided by 5 foundational principles:
+
+1. **Vendor-Neutral Canonical Truth**: Engineering rules, architecture contracts, and preferences live in version-controlled Markdown (`.agents/rules/`), ensuring zero vendor lock-in across Antigravity, Claude Code, Cursor, and future AI tooling.
+2. **Zero-Clutter Dynamic Generation**: Assistant-specific skills, Git hooks, slash commands, and memory files are synthesized on-demand (`scripts/install_tooling.py`), keeping the repository minimal and portable.
+3. **Human Agency & Explicit Consent**: Assistants never silently mutate rules or execute high-impact shifts; workflow habits and preference updates always require explicit developer confirmation before persistence.
+4. **Autonomous Self-Healing within Clear Boundaries**: Deterministic gates and LLM reviews provide actionable diagnostics for assistants to autonomously fix low-impact defects while escalating architectural trade-offs.
+5. **Frictionless Resilience & Continuous Adaptation**: Offline fallbacks, diff caching, and progressive multi-turn learning ensure developer velocity is never blocked while the environment adapts to the team over time.
+
+---
+
 ## Directory Structure
 
 ```text
@@ -93,12 +106,17 @@ sequenceDiagram
 │   │   ├── 01_architecture.md         # Layer isolation, domain boundaries, typed contracts
 │   │   ├── 02_security_and_secrets.md # Secret sanitization, zero hardcoded credentials
 │   │   ├── 03_code_quality.md         # Strict typing, visible mock warnings, error handling
-│   │   └── 04_testing_standards.md    # Test suite isolation, deterministic offline stubs
-│   ├── skills/code-auditor/SKILL.md   # Dynamic Antigravity on-demand audit skill (generated)
+│   │   ├── 04_testing_standards.md    # Test suite isolation, deterministic offline stubs
+│   │   └── 05_personal_preferences.md # Custom developer preferences & workflow rules
+│   ├── skills/                        # Dynamic Antigravity on-demand skills (generated)
+│   │   ├── code-auditor/SKILL.md      # On-demand pre-commit diff audit skill
+│   │   └── personal-preferences/SKILL.md # Workflow preference capture & rule persistence skill
 │   ├── hooks.json                     # Dynamic Antigravity lifecycle hook config (generated)
 │   └── audit.log                      # Local audit execution history
 ├── .claude/
-│   └── commands/audit.md              # Dynamic Claude Code /audit slash command (generated)
+│   └── commands/                      # Dynamic Claude Code slash commands (generated)
+│       ├── audit.md                   # /audit command
+│       └── preferences.md             # /preferences command
 ├── dist/
 │   └── dev-env-tooling.zip            # Standalone portable tooling distribution bundle
 ├── scripts/
@@ -106,6 +124,7 @@ sequenceDiagram
 │   ├── install_tooling.py             # Dynamic assistant tooling & hook generator
 │   ├── package_tooling.py             # Portable workspace bundler & extractor
 │   ├── pre_commit_reviewer.py         # Universal pre-commit review CLI & gating engine
+│   ├── preference_manager.py          # Preference inspector, updater, and rule formatter
 │   └── rule_loader.py                 # Markdown & YAML frontmatter rule parser
 ├── tests/
 │   ├── unit/                          # Isolated unit tests for installer, loader, packager, reviewer
@@ -174,6 +193,7 @@ Rules are defined in [`.agents/rules/`](.agents/rules/) with YAML frontmatter sp
 | [`02_security_and_secrets.md`](.agents/rules/02_security_and_secrets.md) | Security Policy & Secret Sanitization | `CRITICAL` | `*` (All files) |
 | [`03_code_quality.md`](.agents/rules/03_code_quality.md) | Code Quality, Typing & Mock Transparency | `WARN` | `**/*.py`, `**/*.ts`, `**/*.go` |
 | [`04_testing_standards.md`](.agents/rules/04_testing_standards.md) | Isolated & Deterministic Testing | `WARN` | `tests/**`, `**/*test*` |
+| [`05_personal_preferences.md`](.agents/rules/05_personal_preferences.md) | Personal & Team Engineering Preferences | `WARN` | `*` (All files) |
 
 ### Two-Tier Severity Gating Policy
 
@@ -225,6 +245,14 @@ Packages and extracts the portable tooling distribution bundle.
 python3 scripts/package_tooling.py                               # Create dist/dev-env-tooling.zip
 python3 scripts/package_tooling.py --list dist/dev-env-tooling.zip # Inspect zip bundle contents
 python3 scripts/package_tooling.py --extract /path/to/target --install # Extract & auto-install
+```
+
+### `scripts/preference_manager.py`
+Inspects, adds, or removes custom engineering rules and workflow preferences.
+```bash
+python3 scripts/preference_manager.py --list                         # List all recorded preferences
+python3 scripts/preference_manager.py --add "Always use strict typing" --section "2. Code Style & Engineering Conventions"
+python3 scripts/preference_manager.py --remove "strict typing"       # Remove matching preference
 ```
 
 ---

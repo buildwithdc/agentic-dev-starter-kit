@@ -30,24 +30,30 @@ class TestInstallTooling(unittest.TestCase):
 
         # Check installed files
         git_hook = self.root_dir / ".git" / "hooks" / "pre-commit"
-        ag_skill = self.root_dir / ".agents" / "skills" / "code-auditor" / "SKILL.md"
+        ag_audit_skill = self.root_dir / ".agents" / "skills" / "code-auditor" / "SKILL.md"
+        ag_pref_skill = self.root_dir / ".agents" / "skills" / "personal-preferences" / "SKILL.md"
         ag_hooks = self.root_dir / ".agents" / "hooks.json"
-        claude_cmd = self.root_dir / ".claude" / "commands" / "audit.md"
+        claude_audit_cmd = self.root_dir / ".claude" / "commands" / "audit.md"
+        claude_pref_cmd = self.root_dir / ".claude" / "commands" / "preferences.md"
         claude_md = self.root_dir / "CLAUDE.md"
 
         self.assertTrue(git_hook.exists())
-        self.assertTrue(ag_skill.exists())
+        self.assertTrue(ag_audit_skill.exists())
+        self.assertTrue(ag_pref_skill.exists())
         self.assertTrue(ag_hooks.exists())
-        self.assertTrue(claude_cmd.exists())
+        self.assertTrue(claude_audit_cmd.exists())
+        self.assertTrue(claude_pref_cmd.exists())
         self.assertTrue(claude_md.exists())
         self.assertIn("BEGIN CANONICAL RULES POINTER", claude_md.read_text(encoding="utf-8"))
 
         # Clean
         clean_tooling(self.root_dir)
         self.assertFalse(git_hook.exists())
-        self.assertFalse(ag_skill.exists())
+        self.assertFalse(ag_audit_skill.exists())
+        self.assertFalse(ag_pref_skill.exists())
         self.assertFalse(ag_hooks.exists())
-        self.assertFalse(claude_cmd.exists())
+        self.assertFalse(claude_audit_cmd.exists())
+        self.assertFalse(claude_pref_cmd.exists())
 
 
 if __name__ == "__main__":
