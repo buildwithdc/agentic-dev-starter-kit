@@ -93,12 +93,17 @@ sequenceDiagram
 │   │   ├── 01_architecture.md         # Layer isolation, domain boundaries, typed contracts
 │   │   ├── 02_security_and_secrets.md # Secret sanitization, zero hardcoded credentials
 │   │   ├── 03_code_quality.md         # Strict typing, visible mock warnings, error handling
-│   │   └── 04_testing_standards.md    # Test suite isolation, deterministic offline stubs
-│   ├── skills/code-auditor/SKILL.md   # Dynamic Antigravity on-demand audit skill (generated)
+│   │   ├── 04_testing_standards.md    # Test suite isolation, deterministic offline stubs
+│   │   └── 05_personal_preferences.md # Custom developer preferences & workflow rules
+│   ├── skills/                        # Dynamic Antigravity on-demand skills (generated)
+│   │   ├── code-auditor/SKILL.md      # On-demand pre-commit diff audit skill
+│   │   └── personal-preferences/SKILL.md # Workflow preference capture & rule persistence skill
 │   ├── hooks.json                     # Dynamic Antigravity lifecycle hook config (generated)
 │   └── audit.log                      # Local audit execution history
 ├── .claude/
-│   └── commands/audit.md              # Dynamic Claude Code /audit slash command (generated)
+│   └── commands/                      # Dynamic Claude Code slash commands (generated)
+│       ├── audit.md                   # /audit command
+│       └── preferences.md             # /preferences command
 ├── dist/
 │   └── dev-env-tooling.zip            # Standalone portable tooling distribution bundle
 ├── scripts/
@@ -106,6 +111,7 @@ sequenceDiagram
 │   ├── install_tooling.py             # Dynamic assistant tooling & hook generator
 │   ├── package_tooling.py             # Portable workspace bundler & extractor
 │   ├── pre_commit_reviewer.py         # Universal pre-commit review CLI & gating engine
+│   ├── preference_manager.py          # Preference inspector, updater, and rule formatter
 │   └── rule_loader.py                 # Markdown & YAML frontmatter rule parser
 ├── tests/
 │   ├── unit/                          # Isolated unit tests for installer, loader, packager, reviewer
@@ -174,6 +180,7 @@ Rules are defined in [`.agents/rules/`](.agents/rules/) with YAML frontmatter sp
 | [`02_security_and_secrets.md`](.agents/rules/02_security_and_secrets.md) | Security Policy & Secret Sanitization | `CRITICAL` | `*` (All files) |
 | [`03_code_quality.md`](.agents/rules/03_code_quality.md) | Code Quality, Typing & Mock Transparency | `WARN` | `**/*.py`, `**/*.ts`, `**/*.go` |
 | [`04_testing_standards.md`](.agents/rules/04_testing_standards.md) | Isolated & Deterministic Testing | `WARN` | `tests/**`, `**/*test*` |
+| [`05_personal_preferences.md`](.agents/rules/05_personal_preferences.md) | Personal & Team Engineering Preferences | `WARN` | `*` (All files) |
 
 ### Two-Tier Severity Gating Policy
 
@@ -225,6 +232,14 @@ Packages and extracts the portable tooling distribution bundle.
 python3 scripts/package_tooling.py                               # Create dist/dev-env-tooling.zip
 python3 scripts/package_tooling.py --list dist/dev-env-tooling.zip # Inspect zip bundle contents
 python3 scripts/package_tooling.py --extract /path/to/target --install # Extract & auto-install
+```
+
+### `scripts/preference_manager.py`
+Inspects, adds, or removes custom engineering rules and workflow preferences.
+```bash
+python3 scripts/preference_manager.py --list                         # List all recorded preferences
+python3 scripts/preference_manager.py --add "Always use strict typing" --section "2. Code Style & Engineering Conventions"
+python3 scripts/preference_manager.py --remove "strict typing"       # Remove matching preference
 ```
 
 ---

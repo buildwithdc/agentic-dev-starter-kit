@@ -22,6 +22,7 @@ CLAUDE.md
 .claude/
 .agents/hooks.json
 .agents/skills/code-auditor/
+.agents/skills/personal-preferences/
 # Distribution and packaging archives
 dist/
 *.zip

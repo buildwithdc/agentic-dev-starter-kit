@@ -11,6 +11,7 @@ This directory contains vendor-neutral, canonical engineering standards and oper
 | [`02_security_and_secrets.md`](02_security_and_secrets.md) | Security Policy & Secret Sanitization | `CRITICAL` | `*` (All files) |
 | [`03_code_quality.md`](03_code_quality.md) | Code Quality, Typing & Mock Transparency | `WARN` | `**/*.py`, `**/*.ts`, `**/*.go` |
 | [`04_testing_standards.md`](04_testing_standards.md) | Isolated & Deterministic Testing | `WARN` | `tests/**`, `**/*test*` |
+| [`05_personal_preferences.md`](05_personal_preferences.md) | Personal & Team Engineering Preferences | `WARN` | `*` (All files) |
 
 ## Severity Levels
 
