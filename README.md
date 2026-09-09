@@ -9,10 +9,11 @@ A vendor-neutral, portable **Agentic Development Environment** designed for seam
 
 This repository provides:
 1. **A Single Canonical Best-Practices Store** (`.agents/rules/`): Pure Markdown rules with YAML frontmatter.
-2. **A Dynamic Multi-Assistant Installer** (`scripts/install_tooling.py`): Zero repository clutter; generates Git hooks, Antigravity skills/hooks, and Claude Code commands on demand.
-3. **A Universal Pre-Commit Review Engine** (`scripts/pre_commit_reviewer.py` & `scripts/gemini_client.py`): Gemini 3.7 Flash powered diff evaluation supporting Google Application Default Credentials (ADC) and Google AI Studio, with SHA-256 diff caching and a two-tier severity gating policy.
-4. **Autonomous Agent Self-Healing**: Hard violations (`ERROR` / `CRITICAL`) block commits and emit actionable structured diagnostics for hands-free remediation.
-5. **Portable Standalone Distribution** (`scripts/package_tooling.py`): One-command packaging and extraction into any target repository.
+2. **Dynamic Multi-Assistant Tooling & Skills** (`scripts/install_tooling.py`): Zero repository clutter; generates Git hooks, Antigravity skills/hooks, and Claude Code commands on demand.
+3. **Continuous Workflow Adaptation & Preference Persistence** (`scripts/preference_manager.py` & `.agents/rules/05_personal_preferences.md`): Captures developer habits and workflow-level feedback into persistent rules, with strict mandatory human confirmation before recording.
+4. **A Universal Pre-Commit Review Engine** (`scripts/pre_commit_reviewer.py` & `scripts/gemini_client.py`): Gemini 3.7 Flash powered diff evaluation supporting Google Application Default Credentials (ADC) and Google AI Studio, with SHA-256 diff caching and a two-tier severity gating policy.
+5. **Autonomous Agent Self-Healing**: Hard violations (`ERROR` / `CRITICAL`) block commits and emit actionable structured diagnostics for hands-free remediation.
+6. **Portable Standalone Distribution** (`scripts/package_tooling.py`): One-command packaging and extraction into any target repository.
 
 ---
 
@@ -79,6 +80,18 @@ sequenceDiagram
         Git-->>DevOrAgent: ✅ Commit Created Successfully
     end
 ```
+
+---
+
+## Core Guiding Principles
+
+This project is guided by 5 foundational principles:
+
+1. **Vendor-Neutral Canonical Truth**: Engineering rules, architecture contracts, and preferences live in version-controlled Markdown (`.agents/rules/`), ensuring zero vendor lock-in across Antigravity, Claude Code, Cursor, and future AI tooling.
+2. **Zero-Clutter Dynamic Generation**: Assistant-specific skills, Git hooks, slash commands, and memory files are synthesized on-demand (`scripts/install_tooling.py`), keeping the repository minimal and portable.
+3. **Human Agency & Explicit Consent**: Assistants never silently mutate rules or execute high-impact shifts; workflow habits and preference updates always require explicit developer confirmation before persistence.
+4. **Autonomous Self-Healing within Clear Boundaries**: Deterministic gates and LLM reviews provide actionable diagnostics for assistants to autonomously fix low-impact defects while escalating architectural trade-offs.
+5. **Frictionless Resilience & Continuous Adaptation**: Offline fallbacks, diff caching, and progressive multi-turn learning ensure developer velocity is never blocked while the environment adapts to the team over time.
 
 ---
 
