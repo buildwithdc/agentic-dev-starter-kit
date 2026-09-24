@@ -99,6 +99,26 @@ class TestPackageTooling(unittest.TestCase):
         self.assertTrue(extracted_installer.is_file())
         self.assertEqual(extracted_installer.read_text(encoding="utf-8"), "print('install')\n")
 
+    def test_extract_tooling_preserves_existing_agents_md(self) -> None:
+        out_zip = self.root_dir / "dist" / "bundle.zip"
+        package_tooling(
+            root_dir=self.root_dir,
+            output_zip=out_zip,
+            include_tests=False,
+        )
+
+        extract_target = self.root_dir / "existing_workspace"
+        extract_target.mkdir(parents=True, exist_ok=True)
+        user_agents = extract_target / "AGENTS.md"
+        user_agents.write_text("# Target Workspace Custom Rules\n", encoding="utf-8")
+
+        extracted = extract_tooling(out_zip, extract_target)
+        # Existing user file must be preserved
+        self.assertEqual(user_agents.read_text(encoding="utf-8"), "# Target Workspace Custom Rules\n")
+        # Bundle version should be extracted as .dist
+        self.assertIn("AGENTS.md.dist", extracted)
+        self.assertTrue((extract_target / "AGENTS.md.dist").is_file())
+
     def test_cli_execution(self) -> None:
         # Test CLI packager
         out_zip = self.root_dir / "cli_bundle.zip"

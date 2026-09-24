@@ -41,7 +41,7 @@ flowchart TD
     subgraph GeneratedArtifacts ["Generated / Linked Artifacts"]
         G1[".git/hooks/pre-commit"]
         G2[".agents/hooks.json & .agents/skills/code-auditor/"]
-        G3[".claude/commands/audit.md & CLAUDE.md"]
+        G3[".claude/commands/ & AGENTS.md / CLAUDE.md pointer"]
     end
 
     R5 --> DynamicInstaller
@@ -223,10 +223,12 @@ The review engine incorporates robust safeguards to prevent workflow friction:
 ### `scripts/install_tooling.py`
 Dynamically registers or cleans assistant hooks and configurations.
 ```bash
-python3 scripts/install_tooling.py --all          # Install Git pre-commit, Antigravity, and Claude tooling
+python3 scripts/install_tooling.py --all          # Install Git pre-commit, Antigravity, AGENTS pointer, and Claude tooling
 python3 scripts/install_tooling.py --git-hook    # Install only the native Git pre-commit hook
 python3 scripts/install_tooling.py --antigravity # Install only Antigravity skills & hooks
-python3 scripts/install_tooling.py --claude      # Install only Claude Code command & memory pointer
+python3 scripts/install_tooling.py --agents      # Ensure AGENTS.md rules pointer
+python3 scripts/install_tooling.py --claude      # Install Claude Code commands (and memory pointer if CLAUDE.md exists)
+python3 scripts/install_tooling.py -y            # Automatically accept insert-only pointer injection prompts
 python3 scripts/install_tooling.py --clean       # Remove all generated assistant artifacts
 ```
 

@@ -220,9 +220,11 @@ def extract_tooling(
     zip_path: Path | str,
     destination_dir: Path | str,
     run_install: bool = False,
+    assume_yes: bool = False,
 ) -> list[str]:
     """Extract tooling archive into a destination directory and optionally run installer.
 
+    Safeguards existing AGENTS.md / CLAUDE.md files against silent overwrites.
     Returns the list of extracted relative file paths.
     """
     zpath = Path(zip_path).resolve()
@@ -236,6 +238,21 @@ def extract_tooling(
 
     with zipfile.ZipFile(zpath, "r") as zipf:
         for zinfo in zipf.infolist():
+            filename_lower = Path(zinfo.filename).name.lower()
+            if filename_lower in ("agents.md", "claude.md"):
+                dest_file = dest / zinfo.filename
+                alt_name = "agents.md" if zinfo.filename == "AGENTS.md" else "claude.md"
+                alt_file = dest / alt_name
+                existing = dest_file if dest_file.exists() else (alt_file if alt_file.exists() else None)
+                if existing and existing.is_file() and existing.stat().st_size > 0:
+                    archive_content = zipf.read(zinfo)
+                    if existing.read_bytes() != archive_content:
+                        dist_name = zinfo.filename + ".dist"
+                        (dest / dist_name).write_bytes(archive_content)
+                        extracted_files.append(dist_name)
+                        print(f"⚠️  Existing {existing.name} detected in target. Preserved user file; extracted package version as {dist_name}.")
+                        continue
+
             extracted_path = zipf.extract(zinfo, dest)
             extracted_files.append(zinfo.filename)
 
@@ -250,8 +267,11 @@ def extract_tooling(
     if run_install:
         installer = dest / "scripts" / "install_tooling.py"
         if installer.is_file():
+            cmd = [sys.executable, str(installer), "--all", "--root-dir", str(dest)]
+            if assume_yes:
+                cmd.append("-y")
             subprocess.run(
-                [sys.executable, str(installer), "--all", "--root-dir", str(dest)],
+                cmd,
                 check=True,
             )
 
@@ -304,6 +324,12 @@ def main() -> None:
         help="Automatically run scripts/install_tooling.py after extraction",
     )
     parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Automatically accept insert-only pointer injection prompts during install",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Suppress detailed packaging output",
@@ -329,6 +355,7 @@ def main() -> None:
             zip_path=src_zip,
             destination_dir=dest,
             run_install=args.install,
+            assume_yes=args.yes,
         )
         if not args.quiet:
             print(f"✅ Extracted {len(extracted)} files to {dest}")
