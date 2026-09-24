@@ -14,8 +14,8 @@ import stat
 import subprocess
 import sys
 import zipfile
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 DEFAULT_OUTPUT_ZIP = "dist/dev-env-tooling.zip"
 
@@ -88,6 +88,12 @@ def _is_excluded(path: Path) -> bool:
             return True
 
     if path.name in (".DS_Store", "hooks.json") and ".agents" in parts:
+        return True
+
+    if path.name == ".sync_timestamp":
+        return True
+
+    if "personal" in parts and ".agents" in parts and path.name != ".gitkeep":
         return True
 
     if path.suffix.lower() in EXCLUDED_FILE_EXTENSIONS:

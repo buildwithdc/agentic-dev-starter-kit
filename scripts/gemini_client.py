@@ -11,11 +11,10 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
-
-
+from typing import Any
 
 # Environment Variable Configuration Keys
 ENV_BACKEND = "GEMINI_BACKEND"
@@ -267,9 +266,7 @@ class GeminiReviewClient:
             self.config.project_id = discover_gcp_project_id()
 
     def _compute_cache_key(self, diff_text: str, rules_summary: str) -> str:
-        payload = f"{self.config.backend}:{self.config.model}:{self.config.project_id}\n{rules_summary}\n{diff_text}".encode(
-            "utf-8"
-        )
+        payload = f"{self.config.backend}:{self.config.model}:{self.config.project_id}\n{rules_summary}\n{diff_text}".encode()
         return hashlib.sha256(payload).hexdigest()
 
     def _get_cached_result(self, cache_key: str) -> ReviewResult | None:

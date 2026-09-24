@@ -7,8 +7,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.install_tooling import (
-    AGENTS_MEMORY_POINTER_BLOCK,
-    CLAUDE_MEMORY_POINTER_BLOCK,
     clean_tooling,
     ensure_agents_file,
     install_antigravity,
@@ -60,6 +58,11 @@ class TestInstallTooling(unittest.TestCase):
         self.assertTrue((self.root_dir / ".claude" / "commands" / "preferences.md").exists())
         self.assertTrue((self.root_dir / ".agents" / "skills" / "code-auditor" / "SKILL.md").exists())
         self.assertTrue((self.root_dir / ".agents" / "skills" / "personal-preferences" / "SKILL.md").exists())
+
+        # Verify tiered rule directory hierarchy
+        self.assertTrue((self.root_dir / ".agents" / "rules" / "org").is_dir())
+        self.assertTrue((self.root_dir / ".agents" / "rules" / "team").is_dir())
+        self.assertTrue((self.root_dir / ".agents" / "rules" / "personal" / ".gitkeep").exists())
 
         # Clean should remove generated artifacts
         clean_tooling(self.root_dir)

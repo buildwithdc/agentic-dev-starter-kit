@@ -11,10 +11,11 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
-DEFAULT_RULE_RELATIVE_PATH = ".agents/rules/05_personal_preferences.md"
+DEFAULT_RULE_RELATIVE_PATH = ".agents/rules/personal/05_personal_preferences.md"
+LEGACY_RULE_RELATIVE_PATH = ".agents/rules/05_personal_preferences.md"
 
 DEFAULT_TEMPLATE = """---
 id: rule-personal-preferences
@@ -112,7 +113,16 @@ def _resolve_rule_path(rule_file: Path | str | None, root_dir: Path | str = ".")
         if p.is_absolute():
             return p
         return Path(root_dir).resolve() / p
-    return Path(root_dir).resolve() / DEFAULT_RULE_RELATIVE_PATH
+
+    root = Path(root_dir).resolve()
+    personal_file = root / DEFAULT_RULE_RELATIVE_PATH
+    legacy_file = root / LEGACY_RULE_RELATIVE_PATH
+
+    if personal_file.exists():
+        return personal_file
+    if legacy_file.exists():
+        return legacy_file
+    return personal_file
 
 
 def parse_preferences_document(content: str) -> tuple[dict[str, object], str, dict[str, list[str]]]:
