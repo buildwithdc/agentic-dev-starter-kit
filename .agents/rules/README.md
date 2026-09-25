@@ -19,20 +19,20 @@ Rules are partitioned into distinct lifecycles to prevent cross-contamination, r
 ### Tier 1: Organization Rules (`org/`)
 | Rule File | Title | Default Severity | Scope / Applies To |
 | :--- | :--- | :--- | :--- |
-| [`org/00_meta_guidelines.md`](org/00_meta_guidelines.md) | VCS Workflow & Branch Protection | `CRITICAL` | `*` (All files & git operations) |
-| [`org/02_security_and_secrets.md`](org/02_security_and_secrets.md) | Security Policy & Secret Sanitization | `CRITICAL` | `*` (All files) |
+| [`org/org-01-meta-guidelines.md`](org/org-01-meta-guidelines.md) | VCS Workflow & Branch Protection | `CRITICAL` | `*` (All files & git operations) |
+| [`org/org-02-security-and-secrets.md`](org/org-02-security-and-secrets.md) | Security Policy & Secret Sanitization | `CRITICAL` | `*` (All files) |
 
 ### Tier 2: Team / Service Rules (`team/`)
 | Rule File | Title | Default Severity | Scope / Applies To |
 | :--- | :--- | :--- | :--- |
-| [`team/01_architecture.md`](team/01_architecture.md) | Modular Architecture & Domain Boundaries | `WARN` | `**/*.py`, `**/*.ts`, `**/*.go`, `**/*.rs` |
-| [`team/03_code_quality.md`](team/03_code_quality.md) | Code Quality, Typing & Mock Transparency | `WARN` | `**/*.py`, `**/*.ts`, `**/*.go` |
-| [`team/04_testing_standards.md`](team/04_testing_standards.md) | Isolated & Deterministic Testing | `WARN` | `tests/**`, `**/*test*` |
+| [`team/team-01-architecture.md`](team/team-01-architecture.md) | Modular Architecture & Domain Boundaries | `WARN` | `**/*.py`, `**/*.ts`, `**/*.go`, `**/*.rs` |
+| [`team/team-02-code-quality.md`](team/team-02-code-quality.md) | Code Quality, Typing & Mock Transparency | `WARN` | `**/*.py`, `**/*.ts`, `**/*.go` |
+| [`team/team-03-testing-standards.md`](team/team-03-testing-standards.md) | Isolated & Deterministic Testing | `WARN` | `tests/**`, `**/*test*` |
 
 ### Tier 3: Personal Preferences (`personal/`)
 | Rule File | Title | Default Severity | Scope / Applies To |
 | :--- | :--- | :--- | :--- |
-| [`personal/05_personal_preferences.md`](personal/05_personal_preferences.md) | Personal Developer Workflow Preferences | `WARN` | `*` (All files, local only) |
+| [`personal/personal-01-preferences.md`](personal/personal-01-preferences.md) | Personal Developer Workflow Preferences | `WARN` | `*` (All files, local only) |
 
 ---
 

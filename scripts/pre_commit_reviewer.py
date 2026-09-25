@@ -16,6 +16,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+try:
+    from scripts.constants import DEFAULT_AUDIT_LOG_PATH as CONST_AUDIT_LOG_PATH
+    from scripts.constants import RULES_DIR_NAME
+except ImportError:
+    from constants import DEFAULT_AUDIT_LOG_PATH as CONST_AUDIT_LOG_PATH
+    from constants import RULES_DIR_NAME
+
 from gemini_client import (
     GeminiClientConfig,
     GeminiReviewClient,
@@ -80,7 +87,7 @@ def get_staged_diff() -> str:
         return ""
 
 
-DEFAULT_AUDIT_LOG_PATH = Path(".agents/audit.log")
+DEFAULT_AUDIT_LOG_PATH = Path(CONST_AUDIT_LOG_PATH)
 
 
 def get_current_commit_hash() -> str:
@@ -271,8 +278,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Pre-commit LLM Best-Practices Reviewer")
     parser.add_argument(
         "--rules-dir",
-        default=".agents/rules",
-        help="Directory containing canonical markdown rules (default: .agents/rules)",
+        default=RULES_DIR_NAME,
+        help=f"Directory containing canonical markdown rules (default: {RULES_DIR_NAME})",
     )
     parser.add_argument(
         "--skip-llm",

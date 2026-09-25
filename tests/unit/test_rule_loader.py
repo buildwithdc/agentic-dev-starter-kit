@@ -146,5 +146,30 @@ class TestRuleLoader(unittest.TestCase):
         self.assertEqual(conflict_rules[0].severity_default, "CRITICAL")
 
 
+    def test_filename_prefix_tier_detection(self) -> None:
+        flat_dir = self.rules_path / "flat"
+        flat_dir.mkdir(parents=True, exist_ok=True)
+
+        (flat_dir / "org-01-security.md").write_text(
+            "---\nid: org-01-security\ntitle: Security Rule\n---\nContent\n",
+            encoding="utf-8",
+        )
+        (flat_dir / "team-01-architecture.md").write_text(
+            "---\nid: team-01-architecture\ntitle: Architecture Rule\n---\nContent\n",
+            encoding="utf-8",
+        )
+        (flat_dir / "personal-01-preferences.md").write_text(
+            "---\nid: personal-01-preferences\ntitle: Preferences Rule\n---\nContent\n",
+            encoding="utf-8",
+        )
+
+        rules = load_rules(flat_dir)
+        rule_map = {r.id: r for r in rules}
+
+        self.assertEqual(rule_map["org-01-security"].tier, "org")
+        self.assertEqual(rule_map["team-01-architecture"].tier, "team")
+        self.assertEqual(rule_map["personal-01-preferences"].tier, "personal")
+
+
 if __name__ == "__main__":
     unittest.main()

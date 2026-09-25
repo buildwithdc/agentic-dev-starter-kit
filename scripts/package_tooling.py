@@ -17,6 +17,19 @@ import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 
+try:
+    from scripts.constants import (
+        PERSONAL_TIER_DIR_NAME,
+        RULES_DIR_NAME,
+        SYNC_TIMESTAMP_FILENAME,
+    )
+except ImportError:
+    from constants import (
+        PERSONAL_TIER_DIR_NAME,
+        RULES_DIR_NAME,
+        SYNC_TIMESTAMP_FILENAME,
+    )
+
 DEFAULT_OUTPUT_ZIP = "dist/dev-env-tooling.zip"
 
 DEFAULT_INCLUDED_FILES: tuple[str, ...] = (
@@ -26,7 +39,7 @@ DEFAULT_INCLUDED_FILES: tuple[str, ...] = (
 
 DEFAULT_INCLUDED_DIRECTORIES: tuple[str, ...] = (
     "scripts",
-    ".agents/rules",
+    RULES_DIR_NAME,
 )
 
 EXCLUDED_DIR_NAMES: tuple[str, ...] = (
@@ -90,10 +103,10 @@ def _is_excluded(path: Path) -> bool:
     if path.name in (".DS_Store", "hooks.json") and ".agents" in parts:
         return True
 
-    if path.name == ".sync_timestamp":
+    if path.name == SYNC_TIMESTAMP_FILENAME:
         return True
 
-    if "personal" in parts and ".agents" in parts and path.name != ".gitkeep":
+    if PERSONAL_TIER_DIR_NAME in parts and ".agents" in parts and path.name != ".gitkeep":
         return True
 
     if path.suffix.lower() in EXCLUDED_FILE_EXTENSIONS:

@@ -39,7 +39,7 @@ class TestPackageTooling(unittest.TestCase):
         (pycache_dir / "install_tooling.cpython-314.pyc").write_bytes(b"pyc")
         (self.root_dir / ".DS_Store").write_bytes(b"ds_store")
         (self.root_dir / ".agents" / "rules" / "personal").mkdir(parents=True, exist_ok=True)
-        (self.root_dir / ".agents" / "rules" / "personal" / "05_personal_preferences.md").write_text("# Personal\n", encoding="utf-8")
+        (self.root_dir / ".agents" / "rules" / "personal" / "personal-01-preferences.md").write_text("# Personal\n", encoding="utf-8")
         (self.root_dir / ".agents" / "rules" / "org").mkdir(parents=True, exist_ok=True)
         (self.root_dir / ".agents" / "rules" / "org" / ".sync_timestamp").write_text("ts\n", encoding="utf-8")
 
@@ -61,7 +61,7 @@ class TestPackageTooling(unittest.TestCase):
             self.assertNotIn("__pycache__", path)
             self.assertNotIn(".DS_Store", path)
             self.assertNotIn(".sync_timestamp", path)
-            self.assertNotIn("personal/05_personal_preferences.md", path)
+            self.assertNotIn("personal-01-preferences.md", path)
             self.assertFalse(path.endswith(".pyc"))
 
     def test_resolve_package_files_with_tests(self) -> None:

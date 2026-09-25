@@ -20,11 +20,25 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-DEFAULT_SYNC_INTERVAL_SECONDS = 86400  # 24 hours
+try:
+    from scripts.constants import (
+        DEFAULT_AUDIT_LOG_PATH,
+        DEFAULT_SYNC_TTL_SECONDS,
+        ORG_RULES_REL_PATH,
+        SYNC_TIMESTAMP_FILENAME,
+    )
+except ImportError:
+    from constants import (
+        DEFAULT_AUDIT_LOG_PATH,
+        DEFAULT_SYNC_TTL_SECONDS,
+        ORG_RULES_REL_PATH,
+        SYNC_TIMESTAMP_FILENAME,
+    )
+
+DEFAULT_SYNC_INTERVAL_SECONDS = DEFAULT_SYNC_TTL_SECONDS
 DEFAULT_RETRY_INTERVAL_SECONDS = 3600  # 1 hour backoff on network failure
-DEFAULT_TIMESTAMP_RELATIVE_PATH = ".agents/rules/org/.sync_timestamp"
-DEFAULT_ORG_RULES_RELATIVE_PATH = ".agents/rules/org"
-DEFAULT_AUDIT_LOG_PATH = ".agents/audit.log"
+DEFAULT_TIMESTAMP_RELATIVE_PATH = f"{ORG_RULES_REL_PATH}/{SYNC_TIMESTAMP_FILENAME}"
+DEFAULT_ORG_RULES_RELATIVE_PATH = ORG_RULES_REL_PATH
 
 
 def get_timestamp_file(root_dir: Path | str = ".") -> Path:

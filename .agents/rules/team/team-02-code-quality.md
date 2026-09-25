@@ -1,5 +1,5 @@
 ---
-id: rule-code-quality
+id: team-02-code-quality
 title: Code Quality, Typing & Mock Transparency
 severity_default: WARN
 applies_to:

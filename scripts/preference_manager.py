@@ -14,11 +14,15 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-DEFAULT_RULE_RELATIVE_PATH = ".agents/rules/personal/05_personal_preferences.md"
-LEGACY_RULE_RELATIVE_PATH = ".agents/rules/05_personal_preferences.md"
+try:
+    from scripts.constants import DEFAULT_PERSONAL_PREFERENCES_PATH
+except ImportError:
+    from constants import DEFAULT_PERSONAL_PREFERENCES_PATH
+
+DEFAULT_RULE_RELATIVE_PATH = DEFAULT_PERSONAL_PREFERENCES_PATH
 
 DEFAULT_TEMPLATE = """---
-id: rule-personal-preferences
+id: personal-01-preferences
 title: Personal & Team Engineering Preferences
 severity_default: WARN
 applies_to:
@@ -114,15 +118,7 @@ def _resolve_rule_path(rule_file: Path | str | None, root_dir: Path | str = ".")
             return p
         return Path(root_dir).resolve() / p
 
-    root = Path(root_dir).resolve()
-    personal_file = root / DEFAULT_RULE_RELATIVE_PATH
-    legacy_file = root / LEGACY_RULE_RELATIVE_PATH
-
-    if personal_file.exists():
-        return personal_file
-    if legacy_file.exists():
-        return legacy_file
-    return personal_file
+    return Path(root_dir).resolve() / DEFAULT_RULE_RELATIVE_PATH
 
 
 def parse_preferences_document(content: str) -> tuple[dict[str, object], str, dict[str, list[str]]]:

@@ -13,19 +13,32 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Hierarchy and precedence mappings
-TIER_PRIORITY: dict[str, int] = {
-    "personal": 1,
-    "team": 2,
-    "org": 3,
-}
-
-SEVERITY_PRIORITY: dict[str, int] = {
-    "INFO": 0,
-    "WARN": 1,
-    "ERROR": 2,
-    "CRITICAL": 3,
-}
+try:
+    from scripts.constants import (
+        DEFAULT_TIER,
+        ORG_TIER_DIR_NAME,
+        PERSONAL_TIER_DIR_NAME,
+        SEVERITY_PRIORITY,
+        TEAM_TIER_DIR_NAME,
+        TIER_ORG,
+        TIER_PERSONAL,
+        TIER_PREFIX_MAP,
+        TIER_PRIORITY,
+        TIER_TEAM,
+    )
+except ImportError:
+    from constants import (
+        DEFAULT_TIER,
+        ORG_TIER_DIR_NAME,
+        PERSONAL_TIER_DIR_NAME,
+        SEVERITY_PRIORITY,
+        TEAM_TIER_DIR_NAME,
+        TIER_ORG,
+        TIER_PERSONAL,
+        TIER_PREFIX_MAP,
+        TIER_PRIORITY,
+        TIER_TEAM,
+    )
 
 
 @dataclass(frozen=True)
@@ -91,19 +104,25 @@ def _parse_yaml_frontmatter(content: str) -> tuple[dict[str, object], str]:
 
 
 def detect_rule_tier(file_path: Path, meta: dict[str, object]) -> str:
-    """Infer rule tier from frontmatter or directory hierarchy."""
+    """Infer rule tier from frontmatter, filename prefix, or directory hierarchy."""
     if "tier" in meta and str(meta["tier"]).lower() in TIER_PRIORITY:
         return str(meta["tier"]).lower()
 
-    parts = [p.lower() for p in file_path.parts]
-    if "org" in parts:
-        return "org"
-    if "personal" in parts or ".gemini" in parts:
-        return "personal"
-    if "team" in parts:
-        return "team"
+    # Check filename prefix (e.g. org-01-..., team-01-..., personal-01-...)
+    fname = file_path.name.lower()
+    for tier, prefix in TIER_PREFIX_MAP.items():
+        if fname.startswith(prefix):
+            return tier
 
-    return "team"
+    parts = [p.lower() for p in file_path.parts]
+    if ORG_TIER_DIR_NAME in parts:
+        return TIER_ORG
+    if PERSONAL_TIER_DIR_NAME in parts or ".gemini" in parts:
+        return TIER_PERSONAL
+    if TEAM_TIER_DIR_NAME in parts:
+        return TIER_TEAM
+
+    return DEFAULT_TIER
 
 
 def _parse_rule_file(md_file: Path) -> Rule | None:

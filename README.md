@@ -27,21 +27,21 @@ Rules are partitioned into three distinct lifecycles to prevent cross-contaminat
 ```mermaid
 flowchart TD
     subgraph Tier1 ["Tier 1: Organization Rules (org/)"]
-        O1["Security Policy (02_security_and_secrets.md)"]
-        O2["Branch Protection (00_meta_guidelines.md)"]
+        O1["Security Policy (org-02-security-and-secrets.md)"]
+        O2["Branch Protection (org-01-meta-guidelines.md)"]
         O3["Managed by: AI CoE / InfoSec / Platform Team"]
         O4["Sync: 24h Background Worker or Authoritative CI"]
     end
 
     subgraph Tier2 ["Tier 2: Team / Service Rules (team/)"]
-        T1["Architecture (01_architecture.md)"]
-        T2["Code Quality & Typing (03_code_quality.md)"]
-        T3["Testing Standards (04_testing_standards.md)"]
+        T1["Architecture (team-01-architecture.md)"]
+        T2["Code Quality & Typing (team-02-code-quality.md)"]
+        T3["Testing Standards (team-03-testing-standards.md)"]
         T4["Managed by: Service Tech Leads & Pods via PRs"]
     end
 
     subgraph Tier3 ["Tier 3: Personal Preferences (personal/)"]
-        P1["Developer Habits (05_personal_preferences.md)"]
+        P1["Developer Habits (personal-01-preferences.md)"]
         P2["Managed by: Individual Developer"]
         P3["VCS Status: Untracked (.gitignore) or Global Config"]
     end
@@ -111,16 +111,16 @@ Lower tiers can specialize or add constraints, but **cannot weaken or silence** 
 │   ├── rules/                         # Canonical markdown best-practice rules
 │   │   ├── README.md                  # Multi-tier rule catalog & taxonomy
 │   │   ├── org/                       # Tier 1: Organization-wide enterprise rules
-│   │   │   ├── 00_meta_guidelines.md  # Branch protection, PR standards, conventional commits
-│   │   │   ├── 02_security_and_secrets.md # Secret sanitization, zero hardcoded credentials
+│   │   │   ├── org-01-meta-guidelines.md # Branch protection, PR standards, conventional commits
+│   │   │   ├── org-02-security-and-secrets.md # Secret sanitization, zero hardcoded credentials
 │   │   │   └── .sync_timestamp        # Local TTL timestamp (untracked)
 │   │   ├── team/                      # Tier 2: Team / domain architecture rules
-│   │   │   ├── 01_architecture.md     # Layer isolation, domain boundaries, typed contracts
-│   │   │   ├── 03_code_quality.md     # Strict typing, visible mock warnings, error handling
-│   │   │   └── 04_testing_standards.md # Test suite isolation, deterministic offline stubs
+│   │   │   ├── team-01-architecture.md # Layer isolation, domain boundaries, typed contracts
+│   │   │   ├── team-02-code-quality.md # Strict typing, visible mock warnings, error handling
+│   │   │   └── team-03-testing-standards.md # Test suite isolation, deterministic offline stubs
 │   │   └── personal/                  # Tier 3: Developer workflow preferences (untracked)
 │   │       ├── .gitkeep               # Preserves directory in git
-│   │       └── 05_personal_preferences.md # Individual workflow preferences
+│   │       └── personal-01-preferences.md # Individual workflow preferences
 │   ├── skills/                        # Dynamic Antigravity on-demand skills (generated)
 │   │   ├── code-auditor/SKILL.md      # On-demand pre-commit diff audit skill
 │   │   └── personal-preferences/SKILL.md # Workflow preference capture & rule persistence skill
@@ -136,6 +136,7 @@ Lower tiers can specialize or add constraints, but **cannot weaken or silence** 
 ├── dist/
 │   └── dev-env-tooling.zip            # Standalone portable tooling distribution bundle
 ├── scripts/
+│   ├── constants.py                   # Centralized repository constants for rule paths & tiers
 │   ├── gemini_client.py               # Gemini 3.7 Flash review client (Vertex AI & Google AI Studio)
 │   ├── install_tooling.py             # Dynamic assistant tooling & hook generator
 │   ├── package_tooling.py             # Portable workspace bundler & extractor
@@ -245,7 +246,7 @@ python3 scripts/pre_commit_reviewer.py --model gemini-3.7-flash
 ```
 
 ### `scripts/preference_manager.py`
-Inspects, adds, or removes custom developer preferences in `.agents/rules/personal/05_personal_preferences.md`.
+Inspects, adds, or removes custom developer preferences in `.agents/rules/personal/personal-01-preferences.md`.
 ```bash
 python3 scripts/preference_manager.py --list                         # List all recorded preferences
 python3 scripts/preference_manager.py --add "Always use strict typing" --section "2. Code Style & Engineering Conventions"
