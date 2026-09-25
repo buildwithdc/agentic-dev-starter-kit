@@ -101,6 +101,51 @@ sequenceDiagram
 ### The Non-Weakening Rule of Precedence
 Lower tiers can specialize or add constraints, but **cannot weaken or silence** constraints defined in a higher tier. For example, a personal preference or team rule cannot downgrade an organizational `CRITICAL` or `ERROR` rule to `WARN` or `INFO`.
 
+### Team-Level Rules (Tier 2) Governance & Lifecycle
+- **In-Repo Ownership**: Unlike centrally-synced Org rules, Team rules live directly in version control inside `.agents/rules/team/` within each service repository.
+- **Service Pod Autonomy**: Domain tech leads customize rules to match the repository's stack, domain boundaries, and patterns (e.g. database conventions, messaging patterns).
+- **PR Review & Enforcement Gate**: Any modifications to `.agents/rules/team/` require a Pull Request and must pass automated CI checks (`.github/workflows/ai_rules_audit.yml`) to guarantee they cannot weaken or override Tier 1 Org constraints.
+
+---
+
+## Setting Up a Central Organizational Rules Repository
+
+Organizations maintain canonical Tier 1 rules in a dedicated central governance repository (managed by InfoSec, Platform Engineering, or an AI CoE). Downstream developer repositories pull and mirror these rules automatically.
+
+> [!TIP]
+> **Reference Implementation**: Inspect the reference governance repository at [buildwithdc/sample-agentic-dev-governance-rules](https://github.com/buildwithdc/sample-agentic-dev-governance-rules).
+
+### Quick-Start Guide for AI CoE & Platform Teams
+
+1. **Create the Central Governance Repository**:
+   ```bash
+   gh repo create sample-agentic-dev-governance-rules --public --clone
+   cd sample-agentic-dev-governance-rules
+   ```
+
+2. **Structure the Canonical Rules**:
+   ```bash
+   mkdir -p org
+   # Place enterprise canonical rules in org/:
+   # org/org-01-meta-guidelines.md
+   # org/org-02-security-and-secrets.md
+   ```
+
+3. **Package & Publish Release Bundle**:
+   Create a zip asset containing the canonical rules and attach it to a GitHub release:
+   ```bash
+   zip -j rules-org.zip org/*.md
+   gh release create v1.0.0 rules-org.zip --title "v1.0.0 Canonical Rules" --notes "Baseline governance rules"
+   ```
+
+4. **Subscribe Downstream Repositories**:
+   In downstream service repositories, set `ORG_RULES_SYNC_URL` in `.env`:
+   ```env
+   ORG_RULES_SYNC_URL="https://github.com/buildwithdc/sample-agentic-dev-governance-rules/releases/latest/download/rules-org.zip"
+   ```
+   Downstream projects automatically keep their `.agents/rules/org/` cache updated during git pre-commit checks without blocking developers.
+
+
 ---
 
 ## Directory Structure

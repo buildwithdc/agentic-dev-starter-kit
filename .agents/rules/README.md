@@ -45,3 +45,18 @@ Rules are partitioned into distinct lifecycles to prevent cross-contamination, r
 
 ### Non-Weakening Rule of Precedence
 Lower tiers can specialize or add constraints, but **cannot weaken or silence** constraints defined in a higher tier. For example, a personal preference or team rule cannot downgrade an organizational `CRITICAL` or `ERROR` rule to `WARN` or `INFO`.
+
+---
+
+## Team-Level Rules (Tier 2) Governance
+- **In-Repo Ownership**: Unlike centrally-synced Org rules, Team rules live directly in version control inside `team/` within each service repository.
+- **Service Pod Autonomy**: Domain tech leads customize rules to match the repository's stack, domain boundaries, and patterns (e.g. database conventions, messaging patterns).
+- **PR Review & Enforcement Gate**: Any modifications to `team/*.md` require a Pull Request and must pass automated CI checks (`.github/workflows/ai_rules_audit.yml`) to guarantee they cannot weaken or override Tier 1 Org constraints.
+
+---
+
+## Central Organizational Repository Reference
+Organizations maintain canonical Tier 1 rules centrally:
+- **Reference Repository**: [buildwithdc/sample-agentic-dev-governance-rules](https://github.com/buildwithdc/sample-agentic-dev-governance-rules)
+- Downstream repositories mirror this repository via `ORG_RULES_SYNC_URL` in `.env` using [`scripts/sync_org_rules.py`](../../scripts/sync_org_rules.py).
+

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,51 @@ DEFAULT_SYNC_INTERVAL_SECONDS = DEFAULT_SYNC_TTL_SECONDS
 DEFAULT_RETRY_INTERVAL_SECONDS = 3600  # 1 hour backoff on network failure
 DEFAULT_TIMESTAMP_RELATIVE_PATH = f"{ORG_RULES_REL_PATH}/{SYNC_TIMESTAMP_FILENAME}"
 DEFAULT_ORG_RULES_RELATIVE_PATH = ORG_RULES_REL_PATH
+
+
+def load_dotenv(root_dir: Path | str = ".") -> None:
+    """Load environment variables from .env file in root_dir if present."""
+    env_file = Path(root_dir).resolve() / ".env"
+    if not env_file.is_file():
+        return
+    try:
+        content = env_file.read_text(encoding="utf-8")
+        for line in content.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip().strip("'\"")
+            if k and k not in os.environ:
+                os.environ[k] = v
+    except Exception:
+        pass
+
+
+def normalize_sync_url(url: str) -> str:
+    """Normalize user-facing GitHub URLs to direct downloadable asset/archive URLs."""
+    clean_url = url.strip().strip("'\"")
+
+    # GitHub release tag page: https://github.com/owner/repo/releases/tag/v1.0.0
+    tag_match = re.match(r"^https://github\.com/([^/]+)/([^/]+)/releases/tag/([^/]+)/?$", clean_url)
+    if tag_match:
+        owner, repo, tag = tag_match.groups()
+        return f"https://github.com/{owner}/{repo}/releases/download/{tag}/rules-org.zip"
+
+    # GitHub latest release page: https://github.com/owner/repo/releases/latest
+    latest_match = re.match(r"^https://github\.com/([^/]+)/([^/]+)/releases/latest/?$", clean_url)
+    if latest_match:
+        owner, repo = latest_match.groups()
+        return f"https://github.com/{owner}/{repo}/releases/latest/download/rules-org.zip"
+
+    # GitHub repo root: https://github.com/owner/repo
+    repo_match = re.match(r"^https://github\.com/([^/]+)/([^/]+)/?$", clean_url)
+    if repo_match:
+        owner, repo = repo_match.groups()
+        return f"https://github.com/{owner}/{repo}/archive/refs/heads/main.zip"
+
+    return clean_url
 
 
 def get_timestamp_file(root_dir: Path | str = ".") -> Path:
@@ -127,12 +173,34 @@ def trigger_background_sync(
         return False
 
 
-def _atomic_replace_dir(source_tmp_dir: Path, target_dir: Path) -> None:
-    """Atomically replace target directory with source directory contents."""
+def _atomic_replace_dir(source_tmp_dir: Path, target_dir: Path) -> int:
+    """Atomically copy markdown rules from source directory (or org/ subdir) into target directory."""
     target_dir.mkdir(parents=True, exist_ok=True)
-    for item in source_tmp_dir.glob("*.md"):
+
+    # Priority 1: Check for an explicit 'org' subdirectory in extracted contents
+    candidate_files: list[Path] = []
+    org_subdirs = [p for p in source_tmp_dir.rglob("org") if p.is_dir()]
+    if org_subdirs:
+        candidate_files = [f for f in org_subdirs[0].glob("*.md") if f.name.upper() != "README.MD"]
+
+    # Priority 2: Flat markdown files or org-* prefixed files across archive
+    if not candidate_files:
+        candidate_files = [
+            f
+            for f in source_tmp_dir.rglob("*.md")
+            if f.name.upper() != "README.MD"
+            and (
+                f.name.startswith("org-")
+                or not any(p.name in ("team", "personal") for p in f.parents)
+            )
+        ]
+
+    copied_count = 0
+    for item in candidate_files:
         dest = target_dir / item.name
         shutil.copy2(item, dest)
+        copied_count += 1
+    return copied_count
 
 
 def sync_org_rules(
@@ -140,13 +208,15 @@ def sync_org_rules(
     source_dir: Path | str | None = None,
     source_url: str | None = None,
     force: bool = False,
-    timeout_seconds: float = 3.0,
+    timeout_seconds: float = 5.0,
 ) -> bool:
     """Execute synchronization of organizational rules.
 
     Safe, offline-resilient, and non-crashing.
     """
     root = Path(root_dir).resolve()
+    load_dotenv(root)
+
     org_rules_dir = root / DEFAULT_ORG_RULES_RELATIVE_PATH
     org_rules_dir.mkdir(parents=True, exist_ok=True)
 
@@ -166,9 +236,10 @@ def sync_org_rules(
                 log_sync_event(root, "SYNC_LOCAL_SUCCESS", f"Synced {len(md_files)} rules from {src}")
                 return True
 
-    # 2. Remote URL source sync (e.g. GitHub raw URL, S3, or internal release API)
-    resolved_url = source_url or os.getenv("ORG_RULES_SYNC_URL")
-    if resolved_url:
+    # 2. Remote URL source sync (e.g. GitHub release asset, raw URL, S3)
+    raw_url = source_url or os.getenv("ORG_RULES_SYNC_URL")
+    if raw_url:
+        resolved_url = normalize_sync_url(raw_url)
         try:
             req = Request(resolved_url, headers={"User-Agent": "dev-env-rule-sync/1.0"})
             with urlopen(req, timeout=timeout_seconds) as resp:
@@ -176,21 +247,29 @@ def sync_org_rules(
 
             with tempfile.TemporaryDirectory() as tmp_dir:
                 tmp_path = Path(tmp_dir)
-                # Check if payload is tar/zip or markdown file
                 if resolved_url.endswith(".md"):
                     target_filename = Path(resolved_url).name
                     (tmp_path / target_filename).write_bytes(content)
-                elif resolved_url.endswith(".zip"):
+                    copied = _atomic_replace_dir(tmp_path, org_rules_dir)
+                else:
                     import zipfile
                     zip_path = tmp_path / "bundle.zip"
                     zip_path.write_bytes(content)
                     with zipfile.ZipFile(zip_path, "r") as zf:
                         zf.extractall(tmp_path)
+                    copied = _atomic_replace_dir(tmp_path, org_rules_dir)
 
-                _atomic_replace_dir(tmp_path, org_rules_dir)
+            if copied == 0:
+                record_sync_timestamp(root, backoff=True)
+                log_sync_event(
+                    root,
+                    "SYNC_REMOTE_EMPTY",
+                    f"Downloaded archive from {resolved_url} but found no valid org rules",
+                )
+                return False
 
             record_sync_timestamp(root, backoff=False)
-            log_sync_event(root, "SYNC_REMOTE_SUCCESS", f"Synced from {resolved_url}")
+            log_sync_event(root, "SYNC_REMOTE_SUCCESS", f"Synced {copied} rules from {resolved_url}")
             return True
         except (URLError, TimeoutError, OSError) as e:
             # Network drop or offline: fallback gracefully with temporary 1h backoff
@@ -199,7 +278,16 @@ def sync_org_rules(
             return False
 
     # 3. Default behavior when no remote URL configured (local cached validation)
-    existing_rules = list(org_rules_dir.glob("*.md"))
+    existing_rules = [f for f in org_rules_dir.glob("*.md") if f.name.upper() != "README.MD"]
+    if not existing_rules:
+        record_sync_timestamp(root, backoff=True)
+        log_sync_event(
+            root,
+            "SYNC_CACHED_EMPTY",
+            "No remote URL configured and local organizational rules cache is empty",
+        )
+        return False
+
     record_sync_timestamp(root, backoff=False)
     log_sync_event(
         root,

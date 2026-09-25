@@ -10,6 +10,8 @@ from unittest.mock import patch
 from scripts.sync_org_rules import (
     get_timestamp_file,
     is_sync_needed,
+    load_dotenv,
+    normalize_sync_url,
     record_sync_timestamp,
     sync_org_rules,
     trigger_background_sync,
@@ -22,8 +24,18 @@ class TestSyncOrgRules(unittest.TestCase):
         self.root_dir = Path(self.temp_dir.name)
         self.org_dir = self.root_dir / ".agents" / "rules" / "org"
         self.org_dir.mkdir(parents=True, exist_ok=True)
+        import os
+
+        self._orig_sync_url = os.environ.get("ORG_RULES_SYNC_URL")
+        os.environ.pop("ORG_RULES_SYNC_URL", None)
 
     def tearDown(self) -> None:
+        import os
+
+        if self._orig_sync_url is not None:
+            os.environ["ORG_RULES_SYNC_URL"] = self._orig_sync_url
+        else:
+            os.environ.pop("ORG_RULES_SYNC_URL", None)
         self.temp_dir.cleanup()
 
     def test_is_sync_needed_missing_timestamp(self) -> None:
@@ -84,6 +96,34 @@ class TestSyncOrgRules(unittest.TestCase):
         res_fresh = trigger_background_sync(self.root_dir)
         self.assertFalse(res_fresh)
         mock_popen.assert_not_called()
+
+    def test_normalize_sync_url(self) -> None:
+        tag_url = "https://github.com/myorg/rules-repo/releases/tag/v1.2.0"
+        normalized = normalize_sync_url(tag_url)
+        self.assertEqual(
+            normalized,
+            "https://github.com/myorg/rules-repo/releases/download/v1.2.0/rules-org.zip",
+        )
+
+        latest_url = "https://github.com/myorg/rules-repo/releases/latest"
+        self.assertEqual(
+            normalize_sync_url(latest_url),
+            "https://github.com/myorg/rules-repo/releases/latest/download/rules-org.zip",
+        )
+
+        repo_url = "https://github.com/myorg/rules-repo"
+        self.assertEqual(
+            normalize_sync_url(repo_url),
+            "https://github.com/myorg/rules-repo/archive/refs/heads/main.zip",
+        )
+
+    def test_load_dotenv(self) -> None:
+        env_file = self.root_dir / ".env"
+        env_file.write_text('ORG_RULES_SYNC_URL="https://example.com/rules.zip"\n', encoding="utf-8")
+        import os
+        os.environ.pop("ORG_RULES_SYNC_URL", None)
+        load_dotenv(self.root_dir)
+        self.assertEqual(os.environ.get("ORG_RULES_SYNC_URL"), "https://example.com/rules.zip")
 
 
 if __name__ == "__main__":
