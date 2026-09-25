@@ -70,7 +70,7 @@ sequenceDiagram
     Reviewer->>Reviewer: Check .agents/rules/org/.sync_timestamp
 
     alt Timestamp > 24 Hours (or Missing)
-        Reviewer-)Worker: Spawn detached background process (0ms delay)
+        Reviewer-->>Worker: Spawn detached background process (0ms delay)
         Note over Worker: Runs asynchronously in background:<br/>Fetches latest org rules from Central<br/>Validates & atomically writes cache<br/>Updates .sync_timestamp
     else Timestamp < 24 Hours
         Note over Reviewer: Cache fresh; no background sync needed
@@ -96,7 +96,7 @@ sequenceDiagram
 | :--- | :--- | :--- | :--- | :--- |
 | **Tier 1: Organization** | [`.agents/rules/org/`](.agents/rules/org/) | AI CoE / InfoSec / Platform Engineering | Read-only mirror in project repo. | **Highest ($\text{Org} \succ \text{Team} \succ \text{Personal}$)** |
 | **Tier 2: Team** | [`.agents/rules/team/`](.agents/rules/team/) | Service Pods & Domain Tech Leads | Committed and tracked via PRs. | **Middle** |
-| **Tier 3: Personal** | [`.agents/rules/personal/`](.agents/rules/personal/) | Individual Developer | **Untracked (`.gitignore`)** or `~/.gemini/config/rules/`. | **Lowest** |
+| **Tier 3: Personal** | [`.agents/rules/personal/`](.agents/rules/personal/) | Individual Developer | Committed template example ([`personal-01-preferences.md`](.agents/rules/personal/personal-01-preferences.md)) / untracked local rules (`.gitignore`). | **Lowest** |
 
 ### The Non-Weakening Rule of Precedence
 Lower tiers can specialize or add constraints, but **cannot weaken or silence** constraints defined in a higher tier. For example, a personal preference or team rule cannot downgrade an organizational `CRITICAL` or `ERROR` rule to `WARN` or `INFO`.
