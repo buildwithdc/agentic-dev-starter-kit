@@ -10,7 +10,7 @@ Rules are partitioned into distinct lifecycles to prevent cross-contamination, r
 | :--- | :--- | :--- | :--- | :--- |
 | **Tier 1: Organization** | [`org/`](org/) | AI CoE / InfoSec / Platform Engineering. Synced automatically via 24h background worker or reusable CI. | Read-only mirror in project repo. | **Highest ($\text{Tier 1} \succ \text{Tier 2} \succ \text{Tier 3}$)** |
 | **Tier 2: Team** | [`team/`](team/) | Team Tech Leads / Service Pods. Evolves with service architecture and domain models. | Committed and reviewed via normal PRs. | **Middle** |
-| **Tier 3: Personal** | [`personal/`](personal/) | Individual Developer. Ergonomics, personal workflow habits, communication preferences. | **Untracked (`.gitignore`)** or machine-wide (`~/.gemini/config/rules/`). | **Lowest (Cannot weaken Org/Team rules)** |
+| **Tier 3: Personal** | [`personal/`](personal/) | Individual Developer. Ergonomics, personal workflow habits, communication preferences. | Committed template example ([`personal-01-preferences.md`](personal/personal-01-preferences.md)) / untracked local rules (`.gitignore`). | **Lowest (Cannot weaken Org/Team rules)** |
 
 ---
 
