@@ -1,5 +1,5 @@
 ---
-id: rule-architecture
+id: team-01-architecture
 title: Modular Architecture & Domain Boundaries
 severity_default: WARN
 applies_to:

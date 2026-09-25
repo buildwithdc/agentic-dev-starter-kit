@@ -1,5 +1,5 @@
 ---
-id: rule-testing-standards
+id: team-03-testing-standards
 title: Isolated & Deterministic Testing Standards
 severity_default: WARN
 applies_to:

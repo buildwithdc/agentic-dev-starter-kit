@@ -2,56 +2,56 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Model](https://img.shields.io/badge/model-gemini--3.7--flash-orange.svg)](https://deepmind.google/technologies/gemini/)
-[![Assistants](https://img.shields.io/badge/assistants-Antigravity%20%7C%20Claude%20Code%20%7C%20Git-green.svg)](AGENTS.md)
+[![Assistants](https://img.shields.io/badge/assistants-Antigravity%20%7C%20Claude%20Code%20%7C%20Cursor-green.svg)](AGENTS.md)
 [![License](https://img.shields.io/badge/license-MIT-purple.svg)](LICENSE)
 
-A vendor-neutral, portable **Agentic Development Environment** designed for seamless pair programming between human developers and AI coding assistants (Google Antigravity, Anthropic Claude Code, Cursor, and IDE tooling).
+A vendor-neutral, portable **Agentic Development Environment** designed for seamless pair programming and governed collaboration between human developers and AI coding assistants (Google Antigravity, Anthropic Claude Code, Cursor, and IDE tooling).
 
 This repository provides:
-1. **A Single Canonical Best-Practices Store** (`.agents/rules/`): Pure Markdown rules with YAML frontmatter.
-2. **Dynamic Multi-Assistant Tooling & Skills** (`scripts/install_tooling.py`): Zero repository clutter; generates Git hooks, Antigravity skills/hooks, and Claude Code commands on demand.
-3. **Continuous Workflow Adaptation & Preference Persistence** (`scripts/preference_manager.py` & `.agents/rules/05_personal_preferences.md`): Captures developer habits and workflow-level feedback into persistent rules, with strict mandatory human confirmation before recording.
-4. **A Universal Pre-Commit Review Engine** (`scripts/pre_commit_reviewer.py` & `scripts/gemini_client.py`): Gemini 3.7 Flash powered diff evaluation supporting Google Application Default Credentials (ADC) and Google AI Studio, with SHA-256 diff caching and a two-tier severity gating policy.
-5. **Autonomous Agent Self-Healing**: Hard violations (`ERROR` / `CRITICAL`) block commits and emit actionable structured diagnostics for hands-free remediation.
-6. **Portable Standalone Distribution** (`scripts/package_tooling.py`): One-command packaging and extraction into any target repository.
+1. **Multi-Tier Rules Governance Hierarchy** (`.agents/rules/org/`, `.agents/rules/team/`, `.agents/rules/personal/`): Distinct rule lifecycles separating enterprise guardrails, service architecture standards, and personal developer preferences.
+2. **24-Hour Non-Blocking Background Org Rule Sync** (`scripts/sync_org_rules.py`): Automatically checks and updates enterprise rules in a detached background worker without delaying developers' pre-commit workflows.
+3. **Dynamic Multi-Assistant Tooling & Skills** (`scripts/install_tooling.py`): Zero repository clutter; generates Git hooks, Antigravity skills/hooks, and Claude Code commands on demand.
+4. **VCS-Isolated Personal Preference Persistence** (`scripts/preference_manager.py` & `.agents/rules/personal/`): Captures developer habits into persistent rules without polluting git diffs or creating repository merge conflicts.
+5. **Universal Pre-Commit Review Engine** (`scripts/pre_commit_reviewer.py` & `scripts/gemini_client.py`): Gemini 3.7 Flash powered diff evaluation supporting Google Application Default Credentials (ADC) and Google AI Studio, with SHA-256 diff caching and a non-weakening multi-tier gating policy.
+6. **Authoritative CI Gatekeeper** (`.github/workflows/ai_rules_audit.yml`): "Two-Grip" governance model providing local pre-commit assistance paired with mandatory remote CI compliance.
+7. **Portable Standalone Distribution** (`scripts/package_tooling.py`): One-command packaging and extraction into any target repository.
 
 ---
 
-## Architecture & Workflow
+## Architecture & Governance Workflow
 
-### 1. System Architecture
+### 1. Multi-Tier Governance Architecture
+
+Rules are partitioned into three distinct lifecycles to prevent cross-contamination, rule drift, and VCS merge conflicts:
 
 ```mermaid
 flowchart TD
-    subgraph RepoCore ["Canonical Source of Truth (Committed to VCS)"]
-        R1[Canonical Rules: .agents/rules/*.md]
-        R2[Review Engine: scripts/pre_commit_reviewer.py]
-        R3[Gemini API Client: scripts/gemini_client.py]
-        R4[Rule Loader: scripts/rule_loader.py]
-        R5[Tooling Installer: scripts/install_tooling.py]
+    subgraph Tier1 ["Tier 1: Organization Rules (org/)"]
+        O1["Security Policy (org-02-security-and-secrets.md)"]
+        O2["Branch Protection (org-01-meta-guidelines.md)"]
+        O3["Managed by: AI CoE / InfoSec / Platform Team"]
+        O4["Sync: 24h Background Worker or Authoritative CI"]
     end
 
-    subgraph DynamicInstaller ["Dynamic Installer: scripts/install_tooling.py"]
-        I1{Target Assistants}
-        I2[Native Git Pre-Commit Hook]
-        I3[Antigravity Skills & Hooks]
-        I4[Claude Code Commands & Memory]
+    subgraph Tier2 ["Tier 2: Team / Service Rules (team/)"]
+        T1["Architecture (team-01-architecture.md)"]
+        T2["Code Quality & Typing (team-02-code-quality.md)"]
+        T3["Testing Standards (team-03-testing-standards.md)"]
+        T4["Managed by: Service Tech Leads & Pods via PRs"]
     end
 
-    subgraph GeneratedArtifacts ["Generated / Linked Artifacts"]
-        G1[".git/hooks/pre-commit"]
-        G2[".agents/hooks.json & .agents/skills/code-auditor/"]
-        G3[".claude/commands/ & AGENTS.md / CLAUDE.md pointer"]
+    subgraph Tier3 ["Tier 3: Personal Preferences (personal/)"]
+        P1["Developer Habits (personal-01-preferences.md)"]
+        P2["Managed by: Individual Developer"]
+        P3["VCS Status: Untracked (.gitignore) or Global Config"]
     end
 
-    R5 --> DynamicInstaller
-    DynamicInstaller --> I1
-    I1 --> I2 --> G1
-    I1 --> I3 --> G2
-    I1 --> I4 --> G3
+    Tier1 -->|Strict Precedence: Cannot be overridden| Engine[Review Engine: pre_commit_reviewer.py]
+    Tier2 -->|Contextual Architecture Rules| Engine
+    Tier3 -->|Ergonomics: Cannot weaken higher tiers| Engine
 ```
 
-### 2. Pre-Commit Review & Hands-Free Self-Healing
+### 2. The 24-Hour Non-Blocking Org Rule Sync & Review Cycle
 
 ```mermaid
 sequenceDiagram
@@ -59,39 +59,92 @@ sequenceDiagram
     actor DevOrAgent as Assistant / Developer
     participant Git as Git CLI
     participant Hook as .git/hooks/pre-commit
-    participant Engine as Review Engine (Gemini Flash)
-    participant Rules as .agents/rules/
+    participant Reviewer as pre_commit_reviewer.py
+    participant Worker as sync_org_rules.py (Detached)
+    participant Engine as Gemini 3.7 Flash Engine
+    participant Central as Central Rules Endpoint / Org Repo
 
     DevOrAgent->>Git: git commit -m "feat(auth): add login handler"
     Git->>Hook: Execute pre-commit hook
-    Hook->>Engine: Run scripts/pre_commit_reviewer.py
-    Engine->>Git: Check rebase state & staged diff (git diff --cached)
-    Engine->>Rules: Load rules matching staged file patterns
-    Engine->>Engine: Evaluate diff against rules (Vertex AI / Google AI Studio)
-    
-    alt Hard Violations Found (CRITICAL / ERROR)
+    Hook->>Reviewer: Run review check
+    Reviewer->>Reviewer: Check .agents/rules/org/.sync_timestamp
+
+    alt Timestamp > 24 Hours (or Missing)
+        Reviewer-)Worker: Spawn detached background process (0ms delay)
+        Note over Worker: Runs asynchronously in background:<br/>Fetches latest org rules from Central<br/>Validates & atomically writes cache<br/>Updates .sync_timestamp
+    else Timestamp < 24 Hours
+        Note over Reviewer: Cache fresh; no background sync needed
+    end
+
+    Reviewer->>Engine: Immediately review staged diff against cached rules (Org > Team > Personal)
+    alt Critical / Error Violations Detected
         Engine-->>Hook: Exit Code 1 + Structured Diagnostic Report
-        Hook-->>Git: Abort commit
-        Git-->>DevOrAgent: ❌ Commit Blocked with Line Numbers & Fixes
-        Note over DevOrAgent: AI Assistant inspects diagnostics,<br/>fixes violating code, stages changes (git add),<br/>and retries git commit autonomously.
-    else Clean Diff or Advisory (PASS / WARN / INFO)
-        Engine-->>Hook: Exit Code 0 (Prints non-blocking WARN advisories)
-        Hook-->>Git: Proceed
+        Hook-->>Git: Block commit
+        Git-->>DevOrAgent: ❌ Commit Blocked with remediation instructions
+    else Clean Diff or Advisory
+        Engine-->>Hook: Exit Code 0 (WARN advisories printed)
+        Hook-->>Git: Commit allowed
         Git-->>DevOrAgent: ✅ Commit Created Successfully
     end
 ```
 
 ---
 
-## Core Guiding Principles
+## Rule Tiers & Precedence Rules
 
-This project is guided by 5 foundational principles:
+| Tier | Directory | Owner & Lifecycle | Version Control (VCS) | Precedence |
+| :--- | :--- | :--- | :--- | :--- |
+| **Tier 1: Organization** | [`.agents/rules/org/`](.agents/rules/org/) | AI CoE / InfoSec / Platform Engineering | Read-only mirror in project repo. | **Highest ($\text{Org} \succ \text{Team} \succ \text{Personal}$)** |
+| **Tier 2: Team** | [`.agents/rules/team/`](.agents/rules/team/) | Service Pods & Domain Tech Leads | Committed and tracked via PRs. | **Middle** |
+| **Tier 3: Personal** | [`.agents/rules/personal/`](.agents/rules/personal/) | Individual Developer | **Untracked (`.gitignore`)** or `~/.gemini/config/rules/`. | **Lowest** |
 
-1. **Vendor-Neutral Canonical Truth**: Engineering rules, architecture contracts, and preferences live in version-controlled Markdown (`.agents/rules/`), ensuring zero vendor lock-in across Antigravity, Claude Code, Cursor, and future AI tooling.
-2. **Zero-Clutter Dynamic Generation**: Assistant-specific skills, Git hooks, slash commands, and memory files are synthesized on-demand (`scripts/install_tooling.py`), keeping the repository minimal and portable.
-3. **Human Agency & Explicit Consent**: Assistants never silently mutate rules or execute high-impact shifts; workflow habits and preference updates always require explicit developer confirmation before persistence.
-4. **Autonomous Self-Healing within Clear Boundaries**: Deterministic gates and LLM reviews provide actionable diagnostics for assistants to autonomously fix low-impact defects while escalating architectural trade-offs.
-5. **Frictionless Resilience & Continuous Adaptation**: Offline fallbacks, diff caching, and progressive multi-turn learning ensure developer velocity is never blocked while the environment adapts to the team over time.
+### The Non-Weakening Rule of Precedence
+Lower tiers can specialize or add constraints, but **cannot weaken or silence** constraints defined in a higher tier. For example, a personal preference or team rule cannot downgrade an organizational `CRITICAL` or `ERROR` rule to `WARN` or `INFO`.
+
+### Team-Level Rules (Tier 2) Governance & Lifecycle
+- **In-Repo Ownership**: Unlike centrally-synced Org rules, Team rules live directly in version control inside `.agents/rules/team/` within each service repository.
+- **Service Pod Autonomy**: Domain tech leads customize rules to match the repository's stack, domain boundaries, and patterns (e.g. database conventions, messaging patterns).
+- **PR Review & Enforcement Gate**: Any modifications to `.agents/rules/team/` require a Pull Request and must pass automated CI checks (`.github/workflows/ai_rules_audit.yml`) to guarantee they cannot weaken or override Tier 1 Org constraints.
+
+---
+
+## Setting Up a Central Organizational Rules Repository
+
+Organizations maintain canonical Tier 1 rules in a dedicated central governance repository (managed by InfoSec, Platform Engineering, or an AI CoE). Downstream developer repositories pull and mirror these rules automatically.
+
+> [!TIP]
+> **Reference Implementation**: Inspect the reference governance repository at [buildwithdc/sample-agentic-dev-governance-rules](https://github.com/buildwithdc/sample-agentic-dev-governance-rules).
+
+### Quick-Start Guide for AI CoE & Platform Teams
+
+1. **Create the Central Governance Repository**:
+   ```bash
+   gh repo create sample-agentic-dev-governance-rules --public --clone
+   cd sample-agentic-dev-governance-rules
+   ```
+
+2. **Structure the Canonical Rules**:
+   ```bash
+   mkdir -p org
+   # Place enterprise canonical rules in org/:
+   # org/org-01-meta-guidelines.md
+   # org/org-02-security-and-secrets.md
+   ```
+
+3. **Package & Publish Release Bundle**:
+   Create a zip asset containing the canonical rules and attach it to a GitHub release:
+   ```bash
+   zip -j rules-org.zip org/*.md
+   gh release create v1.0.0 rules-org.zip --title "v1.0.0 Canonical Rules" --notes "Baseline governance rules"
+   ```
+
+4. **Subscribe Downstream Repositories**:
+   In downstream service repositories, set `ORG_RULES_SYNC_URL` in `.env`:
+   ```env
+   ORG_RULES_SYNC_URL="https://github.com/buildwithdc/sample-agentic-dev-governance-rules/releases/latest/download/rules-org.zip"
+   ```
+   Downstream projects automatically keep their `.agents/rules/org/` cache updated during git pre-commit checks without blocking developers.
+
 
 ---
 
@@ -101,36 +154,47 @@ This project is guided by 5 foundational principles:
 .
 ├── .agents/
 │   ├── rules/                         # Canonical markdown best-practice rules
-│   │   ├── README.md                  # Rule catalog and taxonomy
-│   │   ├── 00_meta_guidelines.md      # Branch protection, PR standards, conventional commits
-│   │   ├── 01_architecture.md         # Layer isolation, domain boundaries, typed contracts
-│   │   ├── 02_security_and_secrets.md # Secret sanitization, zero hardcoded credentials
-│   │   ├── 03_code_quality.md         # Strict typing, visible mock warnings, error handling
-│   │   ├── 04_testing_standards.md    # Test suite isolation, deterministic offline stubs
-│   │   └── 05_personal_preferences.md # Custom developer preferences & workflow rules
+│   │   ├── README.md                  # Multi-tier rule catalog & taxonomy
+│   │   ├── org/                       # Tier 1: Organization-wide enterprise rules
+│   │   │   ├── org-01-meta-guidelines.md # Branch protection, PR standards, conventional commits
+│   │   │   ├── org-02-security-and-secrets.md # Secret sanitization, zero hardcoded credentials
+│   │   │   └── .sync_timestamp        # Local TTL timestamp (untracked)
+│   │   ├── team/                      # Tier 2: Team / domain architecture rules
+│   │   │   ├── team-01-architecture.md # Layer isolation, domain boundaries, typed contracts
+│   │   │   ├── team-02-code-quality.md # Strict typing, visible mock warnings, error handling
+│   │   │   └── team-03-testing-standards.md # Test suite isolation, deterministic offline stubs
+│   │   └── personal/                  # Tier 3: Developer workflow preferences (untracked)
+│   │       ├── .gitkeep               # Preserves directory in git
+│   │       └── personal-01-preferences.md # Individual workflow preferences
 │   ├── skills/                        # Dynamic Antigravity on-demand skills (generated)
 │   │   ├── code-auditor/SKILL.md      # On-demand pre-commit diff audit skill
 │   │   └── personal-preferences/SKILL.md # Workflow preference capture & rule persistence skill
 │   ├── hooks.json                     # Dynamic Antigravity lifecycle hook config (generated)
-│   └── audit.log                      # Local audit execution history
+│   └── audit.log                      # Local audit and sync execution history
 ├── .claude/
 │   └── commands/                      # Dynamic Claude Code slash commands (generated)
 │       ├── audit.md                   # /audit command
 │       └── preferences.md             # /preferences command
+├── .github/
+│   └── workflows/
+│       └── ai_rules_audit.yml         # Authoritative CI server-side compliance gate
 ├── dist/
 │   └── dev-env-tooling.zip            # Standalone portable tooling distribution bundle
 ├── scripts/
+│   ├── constants.py                   # Centralized repository constants for rule paths & tiers
 │   ├── gemini_client.py               # Gemini 3.7 Flash review client (Vertex AI & Google AI Studio)
 │   ├── install_tooling.py             # Dynamic assistant tooling & hook generator
 │   ├── package_tooling.py             # Portable workspace bundler & extractor
 │   ├── pre_commit_reviewer.py         # Universal pre-commit review CLI & gating engine
 │   ├── preference_manager.py          # Preference inspector, updater, and rule formatter
-│   └── rule_loader.py                 # Markdown & YAML frontmatter rule parser
+│   ├── rule_loader.py                 # Multi-tier rule loader & precedence resolver
+│   └── sync_org_rules.py              # 24-hour background organizational rule synchronizer
 ├── tests/
-│   ├── unit/                          # Isolated unit tests for installer, loader, packager, reviewer
+│   ├── unit/                          # Isolated unit tests for installer, loader, packager, reviewer, sync
 │   └── integration/                   # End-to-end Git hook lifecycle integration tests
 ├── .env.example                       # Environment configuration template
 ├── AGENTS.md                          # Human-Agent collaboration protocol & branch guidelines
+├── pyproject.toml                     # Project dependencies and lint configuration
 └── README.md                          # Project documentation
 ```
 
@@ -162,7 +226,7 @@ This project is guided by 5 foundational principles:
    git add .
    git commit -m "feat(core): implement feature"
    ```
-   The pre-commit hook automatically reviews staged files against canonical rules using Gemini 3.7 Flash.
+   The pre-commit hook automatically checks organizational rule freshness, loads rules across all tiers, and reviews staged diffs using Gemini 3.7 Flash.
 
 ---
 
@@ -182,20 +246,7 @@ python3 scripts/install_tooling.py --all
 
 ---
 
-## Canonical Rule Catalog & Severity Policy
-
-Rules are defined in [`.agents/rules/`](.agents/rules/) with YAML frontmatter specifying file match globs and default severities.
-
-| Rule File | Title | Default Severity | Scope / Applies To |
-| :--- | :--- | :--- | :--- |
-| [`00_meta_guidelines.md`](.agents/rules/00_meta_guidelines.md) | VCS Workflow & Branch Protection | `CRITICAL` | `*` (All files & Git actions) |
-| [`01_architecture.md`](.agents/rules/01_architecture.md) | Modular Architecture & Domain Boundaries | `WARN` | `**/*.py`, `**/*.ts`, `**/*.go`, `**/*.rs` |
-| [`02_security_and_secrets.md`](.agents/rules/02_security_and_secrets.md) | Security Policy & Secret Sanitization | `CRITICAL` | `*` (All files) |
-| [`03_code_quality.md`](.agents/rules/03_code_quality.md) | Code Quality, Typing & Mock Transparency | `WARN` | `**/*.py`, `**/*.ts`, `**/*.go` |
-| [`04_testing_standards.md`](.agents/rules/04_testing_standards.md) | Isolated & Deterministic Testing | `WARN` | `tests/**`, `**/*test*` |
-| [`05_personal_preferences.md`](.agents/rules/05_personal_preferences.md) | Personal & Team Engineering Preferences | `WARN` | `*` (All files) |
-
-### Two-Tier Severity Gating Policy
+## Two-Tier Severity Gating Policy
 
 | Severity | Hook Behavior | Description |
 | :--- | :--- | :--- |
@@ -209,16 +260,51 @@ Rules are defined in [`.agents/rules/`](.agents/rules/) with YAML frontmatter sp
 
 The review engine incorporates robust safeguards to prevent workflow friction:
 
-1. **5-Second / 30-Second API Timeouts**: Network calls fail fast to prevent hanging git operations.
-2. **Offline Degradation**: If Google ADC credentials or API keys are missing, or if the network is unreachable, the reviewer logs a prominent notice, executes local deterministic static checks (`ruff check`), and exits `0` without blocking work.
+1. **24-Hour Background Sync**: Checks and refreshes organizational rules asynchronously in a detached process with zero added latency to developers' commits.
+2. **Offline Resilience**: If the network is unreachable or credentials are missing, organizational rules fall back to the existing local cache, and reviews degrade gracefully to local static checks (`ruff check`).
 3. **Interactive Rebase & Cherry-Pick Detection**: Automatically skips LLM calls during `git rebase` or `git cherry-pick` (`GIT_REFLOG_ACTION`).
 4. **Instant Bypass**: Set `SKIP_LLM_HOOK=1` to temporarily bypass review when necessary.
 5. **Local SHA-256 Diff Caching**: Cached under `.git/.llm_cache` to eliminate duplicate LLM evaluations for identical staged diffs.
-6. **Audit History**: All review decisions (passed, blocked, degraded, skipped) are recorded in `.agents/audit.log`.
+6. **Audit History**: All review decisions and sync operations are recorded in `.agents/audit.log`.
 
 ---
 
 ## CLI Command Reference
+
+### `scripts/sync_org_rules.py`
+Synchronizes central organizational rules into `.agents/rules/org/`.
+```bash
+python3 scripts/sync_org_rules.py                     # Sync rules if older than 24h
+python3 scripts/sync_org_rules.py --check-only        # Check if rules are stale (exit code 1 if stale)
+python3 scripts/sync_org_rules.py --force             # Force immediate synchronization
+python3 scripts/sync_org_rules.py --background        # Run in a detached background worker
+python3 scripts/sync_org_rules.py --source-url <URL>  # Sync from remote release bundle
+```
+
+### `scripts/pre_commit_reviewer.py`
+Executes pre-commit review against staged changes across all tiers.
+```bash
+python3 scripts/pre_commit_reviewer.py                       # Run review against staged changes
+python3 scripts/pre_commit_reviewer.py --skip-llm           # Bypass LLM evaluation
+python3 scripts/pre_commit_reviewer.py --backend google_ai  # Use Google AI Studio backend
+python3 scripts/pre_commit_reviewer.py --model gemini-3.7-flash
+```
+
+### `scripts/preference_manager.py`
+Inspects, adds, or removes custom developer preferences in `.agents/rules/personal/personal-01-preferences.md`.
+```bash
+python3 scripts/preference_manager.py --list                         # List all recorded preferences
+python3 scripts/preference_manager.py --add "Always use strict typing" --section "2. Code Style & Engineering Conventions"
+python3 scripts/preference_manager.py --remove "strict typing"       # Remove matching preference
+```
+
+### `scripts/package_tooling.py`
+Packages and extracts the portable tooling distribution bundle (excluding personal preferences and sync timestamps).
+```bash
+python3 scripts/package_tooling.py                               # Create dist/dev-env-tooling.zip
+python3 scripts/package_tooling.py --list dist/dev-env-tooling.zip # Inspect zip bundle contents
+python3 scripts/package_tooling.py --extract /path/to/target --install # Extract & auto-install
+```
 
 ### `scripts/install_tooling.py`
 Dynamically registers or cleans assistant hooks and configurations.
@@ -232,31 +318,6 @@ python3 scripts/install_tooling.py -y            # Automatically accept insert-o
 python3 scripts/install_tooling.py --clean       # Remove all generated assistant artifacts
 ```
 
-### `scripts/pre_commit_reviewer.py`
-Executes pre-commit review against staged changes.
-```bash
-python3 scripts/pre_commit_reviewer.py                       # Run review against staged changes
-python3 scripts/pre_commit_reviewer.py --skip-llm           # Bypass LLM evaluation
-python3 scripts/pre_commit_reviewer.py --backend google_ai  # Use Google AI Studio backend
-python3 scripts/pre_commit_reviewer.py --model gemini-3.7-flash
-```
-
-### `scripts/package_tooling.py`
-Packages and extracts the portable tooling distribution bundle.
-```bash
-python3 scripts/package_tooling.py                               # Create dist/dev-env-tooling.zip
-python3 scripts/package_tooling.py --list dist/dev-env-tooling.zip # Inspect zip bundle contents
-python3 scripts/package_tooling.py --extract /path/to/target --install # Extract & auto-install
-```
-
-### `scripts/preference_manager.py`
-Inspects, adds, or removes custom engineering rules and workflow preferences.
-```bash
-python3 scripts/preference_manager.py --list                         # List all recorded preferences
-python3 scripts/preference_manager.py --add "Always use strict typing" --section "2. Code Style & Engineering Conventions"
-python3 scripts/preference_manager.py --remove "strict typing"       # Remove matching preference
-```
-
 ---
 
 ## Testing & Quality Assurance
@@ -264,8 +325,11 @@ python3 scripts/preference_manager.py --remove "strict typing"       # Remove ma
 Run the comprehensive unit and integration test suite:
 
 ```bash
-# Run all unit and integration tests
-python3 -m unittest discover tests
+# Run all unit and integration tests with pytest
+uv run pytest
+
+# Run linter checks with ruff
+uv run ruff check .
 ```
 
 ---
@@ -276,5 +340,5 @@ This repository follows strict collaboration rules defined in [**AGENTS.md**](AG
 
 - **Strict Main Branch Protection**: Never commit or push directly to `main`. All changes must go through dedicated feature/fix branches and PRs.
 - **Branch Naming**: `feature/<name>`, `fix/<name>`, `docs/<name>`, `refactor/<name>`, `chore/<name>`, `test/<name>`.
-- **Conventional Commits**: `<type>(<scope>): <summary>` (e.g., `docs(repo): add project-level README`).
+- **Conventional Commits**: `<type>(<scope>): <summary>` (e.g., `feat(governance): implement 3-tier rules hierarchy and 24h background sync`).
 - **Autonomous Resolution**: Low-impact bug fixes and type repairs are resolved autonomously; significant functional/architectural changes require explicit user approval.

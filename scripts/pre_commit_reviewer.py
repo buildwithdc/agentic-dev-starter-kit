@@ -11,11 +11,17 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 # Add script directory to sys.path for local module resolution
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+
+try:
+    from scripts.constants import DEFAULT_AUDIT_LOG_PATH as CONST_AUDIT_LOG_PATH
+    from scripts.constants import RULES_DIR_NAME
+except ImportError:
+    from constants import DEFAULT_AUDIT_LOG_PATH as CONST_AUDIT_LOG_PATH
+    from constants import RULES_DIR_NAME
 
 from gemini_client import (
     GeminiClientConfig,
@@ -23,7 +29,8 @@ from gemini_client import (
     ReviewResult,
     ReviewViolation,
 )
-from rule_loader import Rule, load_rules, match_rules_for_files
+from rule_loader import load_rules, match_rules_for_files
+from sync_org_rules import trigger_background_sync
 
 # ANSI Terminal Colors
 BOLD = "\033[1m"
@@ -80,7 +87,7 @@ def get_staged_diff() -> str:
         return ""
 
 
-DEFAULT_AUDIT_LOG_PATH = Path(".agents/audit.log")
+DEFAULT_AUDIT_LOG_PATH = Path(CONST_AUDIT_LOG_PATH)
 
 
 def get_current_commit_hash() -> str:
@@ -207,7 +214,15 @@ def run_review(
     if not diff_text.strip():
         return 0
 
-    # 4. Load rules
+    # 4. Trigger background sync check for organizational rules (< 1ms check, non-blocking)
+    try:
+        rpath = Path(rules_dir).resolve()
+        root_cand = rpath.parent.parent if rpath.name == "rules" and rpath.parent.name == ".agents" else Path(".")
+        trigger_background_sync(root_dir=root_cand)
+    except Exception:
+        pass
+
+    # Load rules across 3-tier hierarchy (Org, Team, Personal)
     all_rules = load_rules(rules_dir)
     if not all_rules:
         # No rules configured
@@ -221,7 +236,7 @@ def run_review(
         return 0
 
     rules_summary = "\n\n".join(
-        f"--- Rule: {r.id} ({r.title}) [Default Severity: {r.severity_default}] ---\n{r.content}"
+        f"--- Rule: {r.id} ({r.title}) [Tier: {r.tier.upper()}] [Default Severity: {r.severity_default}] ---\n{r.content}"
         for r in matched_rules
     )
 
@@ -263,8 +278,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Pre-commit LLM Best-Practices Reviewer")
     parser.add_argument(
         "--rules-dir",
-        default=".agents/rules",
-        help="Directory containing canonical markdown rules (default: .agents/rules)",
+        default=RULES_DIR_NAME,
+        help=f"Directory containing canonical markdown rules (default: {RULES_DIR_NAME})",
     )
     parser.add_argument(
         "--skip-llm",

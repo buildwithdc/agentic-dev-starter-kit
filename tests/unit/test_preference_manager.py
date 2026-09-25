@@ -21,12 +21,12 @@ class TestPreferenceManager(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.root_dir = Path(self.temp_dir.name)
-        self.rule_file = self.root_dir / ".agents" / "rules" / "05_personal_preferences.md"
+        self.rule_file = self.root_dir / ".agents" / "rules" / "personal" / "personal-01-preferences.md"
         self.rule_file.parent.mkdir(parents=True, exist_ok=True)
 
         initial_content = (
             "---\n"
-            "id: rule-personal-preferences\n"
+            "id: personal-01-preferences\n"
             "title: Personal & Team Engineering Preferences\n"
             "severity_default: WARN\n"
             "applies_to:\n"
@@ -53,12 +53,12 @@ class TestPreferenceManager(unittest.TestCase):
         content = self.rule_file.read_text(encoding="utf-8")
         meta, preamble, sections = parse_preferences_document(content)
 
-        self.assertEqual(meta.get("id"), "rule-personal-preferences")
+        self.assertEqual(meta.get("id"), "personal-01-preferences")
         self.assertIn("1. General Workflow Preferences", sections)
         self.assertEqual(len(sections["1. General Workflow Preferences"]), 1)
 
         reformatted = format_preferences_document(meta, preamble, sections)
-        self.assertIn("id: rule-personal-preferences", reformatted)
+        self.assertIn("id: personal-01-preferences", reformatted)
         self.assertIn("Explicitly confirm before modifying", reformatted)
 
     def test_add_preference_success(self) -> None:

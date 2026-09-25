@@ -1,5 +1,5 @@
 ---
-id: rule-meta-guidelines
+id: org-01-meta-guidelines
 title: VCS Workflow, Branch Protection & Commit Standards
 severity_default: CRITICAL
 applies_to:

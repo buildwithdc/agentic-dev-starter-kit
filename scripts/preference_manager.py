@@ -11,13 +11,18 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
-DEFAULT_RULE_RELATIVE_PATH = ".agents/rules/05_personal_preferences.md"
+try:
+    from scripts.constants import DEFAULT_PERSONAL_PREFERENCES_PATH
+except ImportError:
+    from constants import DEFAULT_PERSONAL_PREFERENCES_PATH
+
+DEFAULT_RULE_RELATIVE_PATH = DEFAULT_PERSONAL_PREFERENCES_PATH
 
 DEFAULT_TEMPLATE = """---
-id: rule-personal-preferences
+id: personal-01-preferences
 title: Personal & Team Engineering Preferences
 severity_default: WARN
 applies_to:
@@ -112,6 +117,7 @@ def _resolve_rule_path(rule_file: Path | str | None, root_dir: Path | str = ".")
         if p.is_absolute():
             return p
         return Path(root_dir).resolve() / p
+
     return Path(root_dir).resolve() / DEFAULT_RULE_RELATIVE_PATH
 
 

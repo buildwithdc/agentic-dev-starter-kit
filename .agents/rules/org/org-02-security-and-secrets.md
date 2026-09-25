@@ -1,5 +1,5 @@
 ---
-id: rule-security-secrets
+id: org-02-security-and-secrets
 title: Security Policy & Secret Sanitization
 severity_default: CRITICAL
 applies_to:

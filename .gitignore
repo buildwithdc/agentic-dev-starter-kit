@@ -31,4 +31,11 @@ dist/
 .agents/*.log
 *.log
 
+# Multi-tier governance: local personal preferences (untracked) & sync timestamps
+.agents/rules/personal/*
+!.agents/rules/personal/.gitkeep
+.agents/rules/org/.sync_timestamp
+.sync_timestamp
+
+
 
