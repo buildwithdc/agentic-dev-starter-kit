@@ -279,6 +279,7 @@ python3 scripts/sync_org_rules.py --check-only        # Check if rules are stale
 python3 scripts/sync_org_rules.py --force             # Force immediate synchronization
 python3 scripts/sync_org_rules.py --background        # Run in a detached background worker
 python3 scripts/sync_org_rules.py --source-url <URL>  # Sync from remote release bundle
+python3 scripts/sync_org_rules.py --verbose           # Verbose mode: show origin, timestamp, rules & changes
 ```
 
 ### `scripts/pre_commit_reviewer.py`

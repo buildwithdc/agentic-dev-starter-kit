@@ -9,6 +9,7 @@ offline-resilient background execution model.
 from __future__ import annotations
 
 import argparse
+import difflib
 import os
 import re
 import shutil
@@ -16,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import URLError
@@ -92,6 +94,28 @@ def get_timestamp_file(root_dir: Path | str = ".") -> Path:
     return Path(root_dir).resolve() / DEFAULT_TIMESTAMP_RELATIVE_PATH
 
 
+def _parse_timestamp_age(
+    content: str,
+    fallback_mtime: float,
+) -> tuple[str | None, str | None, float]:
+    """Parse ISO timestamp, status, and compute age from content, falling back to mtime."""
+    parts = [p.strip() for p in content.split("|", 1)]
+    iso_ts = parts[0] if parts and parts[0] else None
+    status = parts[1] if len(parts) > 1 and parts[1] else None
+
+    if iso_ts:
+        try:
+            dt = datetime.fromisoformat(iso_ts)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - dt).total_seconds()
+            return iso_ts, status, age
+        except Exception:
+            pass
+
+    return iso_ts, status, max(0.0, time.time() - fallback_mtime)
+
+
 def is_sync_needed(
     root_dir: Path | str = ".",
     interval_seconds: int = DEFAULT_SYNC_INTERVAL_SECONDS,
@@ -102,7 +126,8 @@ def is_sync_needed(
         return True
 
     try:
-        age = time.time() - ts_file.stat().st_mtime
+        content = ts_file.read_text(encoding="utf-8").strip()
+        _, _, age = _parse_timestamp_age(content, ts_file.stat().st_mtime)
         return age >= interval_seconds
     except Exception:
         return True
@@ -173,19 +198,78 @@ def trigger_background_sync(
         return False
 
 
-def _atomic_replace_dir(source_tmp_dir: Path, target_dir: Path) -> int:
-    """Atomically copy markdown rules from source directory (or org/ subdir) into target directory."""
-    target_dir.mkdir(parents=True, exist_ok=True)
+def format_duration(seconds: float) -> str:
+    """Format duration in seconds into a concise human-readable string."""
+    if seconds < 0:
+        return "in the future"
+    seconds_int = int(seconds)
+    if seconds_int < 60:
+        return f"{seconds_int}s ago"
+    minutes = seconds_int // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    rem_min = minutes % 60
+    if hours < 24:
+        return f"{hours}h {rem_min}m ago" if rem_min else f"{hours}h ago"
+    days = hours // 24
+    rem_hours = hours % 24
+    return f"{days}d {rem_hours}h ago" if rem_hours else f"{days}d ago"
 
+
+def format_file_size(size_bytes: int) -> str:
+    """Format file size in bytes to human-readable string."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    else:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+
+def get_last_sync_info(
+    root_dir: Path | str = ".",
+) -> tuple[str | None, str | None, float | None]:
+    """Read last sync timestamp, status, and age in seconds.
+
+    Returns:
+        (iso_timestamp, status_str, age_seconds) or (None, None, None) if not found.
+    """
+    ts_file = get_timestamp_file(root_dir)
+    if not ts_file.exists():
+        return None, None, None
+
+    try:
+        content = ts_file.read_text(encoding="utf-8").strip()
+        iso_ts, status, age_seconds = _parse_timestamp_age(content, ts_file.stat().st_mtime)
+        return iso_ts, status, age_seconds
+    except Exception:
+        return None, None, None
+
+
+def get_local_rules(root_dir: Path | str = ".") -> list[Path]:
+    """Return list of existing local organizational markdown rule files."""
+    org_rules_dir = Path(root_dir).resolve() / DEFAULT_ORG_RULES_RELATIVE_PATH
+    if not org_rules_dir.is_dir():
+        return []
+    return sorted(
+        [f for f in org_rules_dir.glob("*.md") if f.name.upper() != "README.MD"],
+        key=lambda p: p.name,
+    )
+
+
+def _get_candidate_files(source_tmp_dir: Path) -> list[Path]:
+    """Find candidate rule markdown files in extracted directory."""
     # Priority 1: Check for an explicit 'org' subdirectory in extracted contents
-    candidate_files: list[Path] = []
     org_subdirs = [p for p in source_tmp_dir.rglob("org") if p.is_dir()]
     if org_subdirs:
         candidate_files = [f for f in org_subdirs[0].glob("*.md") if f.name.upper() != "README.MD"]
+        if candidate_files:
+            return sorted(candidate_files, key=lambda p: p.name)
 
     # Priority 2: Flat markdown files or org-* prefixed files across archive
-    if not candidate_files:
-        candidate_files = [
+    return sorted(
+        [
             f
             for f in source_tmp_dir.rglob("*.md")
             if f.name.upper() != "README.MD"
@@ -193,7 +277,173 @@ def _atomic_replace_dir(source_tmp_dir: Path, target_dir: Path) -> int:
                 f.name.startswith("org-")
                 or not any(p.name in ("team", "personal") for p in f.parents)
             )
-        ]
+        ],
+        key=lambda p: p.name,
+    )
+
+
+@dataclass
+class RuleChanges:
+    """Track changes between remote candidate rules and local rules."""
+
+    added: list[str] = field(default_factory=list)
+    modified: list[str] = field(default_factory=list)
+    unchanged: list[str] = field(default_factory=list)
+    local_only: list[str] = field(default_factory=list)
+    diffs: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def has_changes(self) -> bool:
+        return bool(self.added or self.modified)
+
+    def summary(self) -> str:
+        parts = []
+        if self.added:
+            parts.append(f"{len(self.added)} added")
+        if self.modified:
+            parts.append(f"{len(self.modified)} modified")
+        if self.unchanged:
+            parts.append(f"{len(self.unchanged)} unchanged")
+        if self.local_only:
+            parts.append(f"{len(self.local_only)} local-only")
+        return ", ".join(parts) if parts else "0 rules evaluated"
+
+
+def compare_rule_files(
+    candidate_files: list[Path],
+    target_dir: Path,
+) -> RuleChanges:
+    """Compare candidate incoming rule files with existing local rule files."""
+    changes = RuleChanges()
+    local_rules = (
+        {f.name: f for f in target_dir.glob("*.md") if f.name.upper() != "README.MD"}
+        if target_dir.is_dir()
+        else {}
+    )
+
+    candidate_map = {f.name: f for f in candidate_files}
+
+    for name, cand_path in sorted(candidate_map.items()):
+        if name not in local_rules:
+            changes.added.append(name)
+        else:
+            local_path = local_rules[name]
+            try:
+                cand_bytes = cand_path.read_bytes()
+                local_bytes = local_path.read_bytes()
+                if cand_bytes == local_bytes:
+                    changes.unchanged.append(name)
+                else:
+                    changes.modified.append(name)
+                    cand_text = cand_bytes.decode("utf-8", errors="replace")
+                    local_text = local_bytes.decode("utf-8", errors="replace")
+                    diff_lines = list(
+                        difflib.unified_diff(
+                            local_text.splitlines(),
+                            cand_text.splitlines(),
+                            fromfile=f"local/{name}",
+                            tofile=f"remote/{name}",
+                            lineterm="",
+                            n=2,
+                        )
+                    )
+                    changes.diffs[name] = "\n".join(diff_lines)
+            except Exception:
+                changes.modified.append(name)
+
+    for name in sorted(local_rules.keys()):
+        if name not in candidate_map:
+            changes.local_only.append(name)
+
+    return changes
+
+
+def format_verbose_report(
+    remote_origin: str,
+    last_sync_info: tuple[str | None, str | None, float | None],
+    local_rules: list[Path],
+    changes: RuleChanges | None = None,
+    changes_message: str | None = None,
+    title: str = "Organizational Rules Sync",
+) -> str:
+    """Format detailed sync information report."""
+    iso_ts, status, age_seconds = last_sync_info
+
+    # 1. Format timestamp
+    if iso_ts:
+        status_suffix = f" [{status}]" if status else ""
+        age_str = f" ({format_duration(age_seconds)})" if age_seconds is not None else ""
+        ts_display = f"{iso_ts}{status_suffix}{age_str}"
+    else:
+        ts_display = "Never (no sync record found)"
+
+    # 2. Format local rules
+    if local_rules:
+        local_rules_header = f"Local Rules ({len(local_rules)} in {DEFAULT_ORG_RULES_RELATIVE_PATH}):"
+        rule_items = []
+        for r in local_rules:
+            try:
+                sz = format_file_size(r.stat().st_size)
+                rule_items.append(f"  - {r.name} ({sz})")
+            except Exception:
+                rule_items.append(f"  - {r.name}")
+        local_rules_display = "\n".join([local_rules_header] + rule_items)
+    else:
+        local_rules_display = f"Local Rules (0): None found in {DEFAULT_ORG_RULES_RELATIVE_PATH}"
+
+    # 3. Format changes
+    if changes_message:
+        changes_display = f"Changes from Remote:\n  {changes_message}"
+    elif changes is not None:
+        change_lines = ["Changes from Remote:"]
+        if not changes.has_changes and not changes.local_only:
+            change_lines.append(f"  No changes detected ({len(changes.unchanged)} rule(s) up to date)")
+            for f in changes.unchanged:
+                change_lines.append(f"    = {f} (unchanged)")
+        else:
+            change_lines.append(f"  Summary: {changes.summary()}")
+            for f in changes.added:
+                change_lines.append(f"    + {f} (added from remote)")
+            for f in changes.modified:
+                diff_summary = ""
+                diff_text = changes.diffs.get(f, "")
+                if diff_text:
+                    d_lines = diff_text.splitlines()
+                    adds = sum(1 for line in d_lines if line.startswith("+") and not line.startswith("+++"))
+                    dels = sum(1 for line in d_lines if line.startswith("-") and not line.startswith("---"))
+                    diff_summary = f" (+{adds}, -{dels} lines)"
+                change_lines.append(f"    ~ {f} (modified from remote{diff_summary})")
+                if diff_text:
+                    d_split = diff_text.splitlines()
+                    for diff_line in d_split[:15]:
+                        change_lines.append(f"        {diff_line}")
+                    if len(d_split) > 15:
+                        remaining = len(d_split) - 15
+                        change_lines.append(f"        ... ({remaining} more diff lines)")
+            for f in changes.unchanged:
+                change_lines.append(f"    = {f} (unchanged)")
+            for f in changes.local_only:
+                change_lines.append(f"    ? {f} (local-only, retained)")
+        changes_display = "\n".join(change_lines)
+    else:
+        changes_display = "Changes from Remote:\n  None"
+
+    sep = "=" * 60
+    return (
+        f"{sep}\n"
+        f"=== {title} (Verbose Mode) ===\n"
+        f"Remote Origin:       {remote_origin}\n"
+        f"Last Sync Timestamp: {ts_display}\n"
+        f"{local_rules_display}\n"
+        f"{changes_display}\n"
+        f"{sep}"
+    )
+
+
+def _atomic_replace_dir(source_tmp_dir: Path, target_dir: Path) -> int:
+    """Atomically copy markdown rules from source directory (or org/ subdir) into target directory."""
+    target_dir.mkdir(parents=True, exist_ok=True)
+    candidate_files = _get_candidate_files(source_tmp_dir)
 
     copied_count = 0
     for item in candidate_files:
@@ -209,6 +459,7 @@ def sync_org_rules(
     source_url: str | None = None,
     force: bool = False,
     timeout_seconds: float = 5.0,
+    verbose: bool = False,
 ) -> bool:
     """Execute synchronization of organizational rules.
 
@@ -220,24 +471,67 @@ def sync_org_rules(
     org_rules_dir = root / DEFAULT_ORG_RULES_RELATIVE_PATH
     org_rules_dir.mkdir(parents=True, exist_ok=True)
 
+    raw_url = source_url or os.getenv("ORG_RULES_SYNC_URL")
+    if source_dir:
+        remote_origin = f"{Path(source_dir).resolve()} (local directory)"
+    elif raw_url:
+        resolved_url = normalize_sync_url(raw_url)
+        if resolved_url != raw_url:
+            remote_origin = f"{raw_url} (resolved: {resolved_url})"
+        else:
+            remote_origin = raw_url
+    else:
+        remote_origin = "None (not configured; using local cache)"
+
     if not force and not is_sync_needed(root):
+        if verbose:
+            last_sync_info = get_last_sync_info(root)
+            local_rules = get_local_rules(root)
+            _, _, age_s = last_sync_info
+            age_desc = format_duration(age_s) if age_s is not None else "recently"
+            msg = f"Skipped (cache is fresh, last synced {age_desc}; use --force to fetch from remote)"
+            print(
+                format_verbose_report(
+                    remote_origin=remote_origin,
+                    last_sync_info=last_sync_info,
+                    local_rules=local_rules,
+                    changes_message=msg,
+                )
+            )
         return True
 
     # 1. Local source directory sync (e.g. for testing or monorepos)
     if source_dir:
         src = Path(source_dir).resolve()
         if src.is_dir():
-            md_files = list(src.glob("*.md"))
-            if md_files:
-                for f in md_files:
-                    if f.name.upper() != "README.MD":
-                        shutil.copy2(f, org_rules_dir / f.name)
+            candidate_files = sorted(
+                [f for f in src.glob("*.md") if f.name.upper() != "README.MD"],
+                key=lambda p: p.name,
+            )
+            if candidate_files:
+                changes = compare_rule_files(candidate_files, org_rules_dir)
+                for f in candidate_files:
+                    shutil.copy2(f, org_rules_dir / f.name)
                 record_sync_timestamp(root, backoff=False)
-                log_sync_event(root, "SYNC_LOCAL_SUCCESS", f"Synced {len(md_files)} rules from {src}")
+                log_sync_event(
+                    root,
+                    "SYNC_LOCAL_SUCCESS",
+                    f"Synced {len(candidate_files)} rules from {src} ({changes.summary()})",
+                )
+                if verbose:
+                    last_sync_info = get_last_sync_info(root)
+                    local_rules = get_local_rules(root)
+                    print(
+                        format_verbose_report(
+                            remote_origin=remote_origin,
+                            last_sync_info=last_sync_info,
+                            local_rules=local_rules,
+                            changes=changes,
+                        )
+                    )
                 return True
 
     # 2. Remote URL source sync (e.g. GitHub release asset, raw URL, S3)
-    raw_url = source_url or os.getenv("ORG_RULES_SYNC_URL")
     if raw_url:
         resolved_url = normalize_sync_url(raw_url)
         try:
@@ -250,14 +544,17 @@ def sync_org_rules(
                 if resolved_url.endswith(".md"):
                     target_filename = Path(resolved_url).name
                     (tmp_path / target_filename).write_bytes(content)
-                    copied = _atomic_replace_dir(tmp_path, org_rules_dir)
                 else:
                     import zipfile
+
                     zip_path = tmp_path / "bundle.zip"
                     zip_path.write_bytes(content)
                     with zipfile.ZipFile(zip_path, "r") as zf:
                         zf.extractall(tmp_path)
-                    copied = _atomic_replace_dir(tmp_path, org_rules_dir)
+
+                candidate_files = _get_candidate_files(tmp_path)
+                changes = compare_rule_files(candidate_files, org_rules_dir)
+                copied = _atomic_replace_dir(tmp_path, org_rules_dir)
 
             if copied == 0:
                 record_sync_timestamp(root, backoff=True)
@@ -266,19 +563,56 @@ def sync_org_rules(
                     "SYNC_REMOTE_EMPTY",
                     f"Downloaded archive from {resolved_url} but found no valid org rules",
                 )
+                if verbose:
+                    last_sync_info = get_last_sync_info(root)
+                    local_rules = get_local_rules(root)
+                    print(
+                        format_verbose_report(
+                            remote_origin=remote_origin,
+                            last_sync_info=last_sync_info,
+                            local_rules=local_rules,
+                            changes_message=f"Downloaded archive from {resolved_url} but found no valid org rules",
+                        )
+                    )
                 return False
 
             record_sync_timestamp(root, backoff=False)
-            log_sync_event(root, "SYNC_REMOTE_SUCCESS", f"Synced {copied} rules from {resolved_url}")
+            log_sync_event(
+                root,
+                "SYNC_REMOTE_SUCCESS",
+                f"Synced {copied} rules from {resolved_url} ({changes.summary()})",
+            )
+            if verbose:
+                last_sync_info = get_last_sync_info(root)
+                local_rules = get_local_rules(root)
+                print(
+                    format_verbose_report(
+                        remote_origin=remote_origin,
+                        last_sync_info=last_sync_info,
+                        local_rules=local_rules,
+                        changes=changes,
+                    )
+                )
             return True
         except (URLError, TimeoutError, OSError) as e:
             # Network drop or offline: fallback gracefully with temporary 1h backoff
             record_sync_timestamp(root, backoff=True)
             log_sync_event(root, "SYNC_REMOTE_OFFLINE", f"Offline or timeout ({e}). Preserving local cache.")
+            if verbose:
+                last_sync_info = get_last_sync_info(root)
+                local_rules = get_local_rules(root)
+                print(
+                    format_verbose_report(
+                        remote_origin=remote_origin,
+                        last_sync_info=last_sync_info,
+                        local_rules=local_rules,
+                        changes_message=f"Offline or timeout ({e}). Preserving local cache.",
+                    )
+                )
             return False
 
     # 3. Default behavior when no remote URL configured (local cached validation)
-    existing_rules = [f for f in org_rules_dir.glob("*.md") if f.name.upper() != "README.MD"]
+    existing_rules = get_local_rules(root)
     if not existing_rules:
         record_sync_timestamp(root, backoff=True)
         log_sync_event(
@@ -286,6 +620,16 @@ def sync_org_rules(
             "SYNC_CACHED_EMPTY",
             "No remote URL configured and local organizational rules cache is empty",
         )
+        if verbose:
+            last_sync_info = get_last_sync_info(root)
+            print(
+                format_verbose_report(
+                    remote_origin=remote_origin,
+                    last_sync_info=last_sync_info,
+                    local_rules=[],
+                    changes_message="No remote URL configured and local organizational rules cache is empty",
+                )
+            )
         return False
 
     record_sync_timestamp(root, backoff=False)
@@ -294,6 +638,16 @@ def sync_org_rules(
         "SYNC_CACHED_VALIDATED",
         f"Verified {len(existing_rules)} organizational rules active in local cache",
     )
+    if verbose:
+        last_sync_info = get_last_sync_info(root)
+        print(
+            format_verbose_report(
+                remote_origin=remote_origin,
+                last_sync_info=last_sync_info,
+                local_rules=existing_rules,
+                changes_message="None (no remote origin configured; validated local cache)",
+            )
+        )
     return True
 
 
@@ -329,11 +683,41 @@ def main() -> None:
         action="store_true",
         help="Trigger sync in a detached background process",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Show detailed sync information including remote origin, last sync timestamp, local rules, and changes from remote",
+    )
 
     args = parser.parse_args()
 
     if args.check_only:
         needed = is_sync_needed(args.root_dir)
+        if args.verbose:
+            load_dotenv(args.root_dir)
+            raw_url = args.source_url or os.getenv("ORG_RULES_SYNC_URL")
+            if args.source_dir:
+                origin = f"{Path(args.source_dir).resolve()} (local directory)"
+            elif raw_url:
+                res_url = normalize_sync_url(raw_url)
+                origin = f"{raw_url} (resolved: {res_url})" if res_url != raw_url else raw_url
+            else:
+                origin = "None (not configured; using local cache)"
+            status_desc = (
+                "Sync needed (cache is older than 24 hours; run sync to update)"
+                if needed
+                else "Up to date (cache is within 24-hour TTL)"
+            )
+            print(
+                format_verbose_report(
+                    remote_origin=origin,
+                    last_sync_info=get_last_sync_info(args.root_dir),
+                    local_rules=get_local_rules(args.root_dir),
+                    changes_message=f"Check-only mode: {status_desc}",
+                    title="Organizational Rules Sync Check",
+                )
+            )
         if needed:
             print("Sync needed: organizational rules are older than 24 hours.")
             sys.exit(1)
@@ -354,6 +738,7 @@ def main() -> None:
         source_dir=args.source_dir,
         source_url=args.source_url,
         force=args.force,
+        verbose=args.verbose,
     )
     if success:
         print("✅ Organizational rules synchronized successfully.")
