@@ -6,7 +6,9 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
+from scripts.gemini_client import RuleCollisionResult, RuleConflictDetail
 from scripts.preference_manager import (
     add_preference,
     format_preferences_document,
@@ -145,6 +147,54 @@ class TestPreferenceManager(unittest.TestCase):
             "--remove", "CLI tested",
         ])
         self.assertEqual(ret_rem, 0)
+
+    def test_cli_check_collision(self) -> None:
+        with patch("scripts.preference_manager.check_rule_collision") as mock_check:
+            mock_check.return_value = RuleCollisionResult(
+                has_collision=True,
+                summary="Collides with org security.",
+                conflicts=[
+                    RuleConflictDetail(
+                        rule_id="org-02-security-and-secrets",
+                        rule_title="Zero Hardcoded Credentials",
+                        tier="ORG",
+                        reason="Hardcoded keys forbidden.",
+                    )
+                ],
+            )
+
+            f = io.StringIO()
+            with redirect_stdout(f):
+                ret = main([
+                    "--root-dir", str(self.root_dir),
+                    "--check-collision", "Allow mock keys in dev",
+                ])
+            self.assertEqual(ret, 1)
+            self.assertIn("Semantic collision detected", f.getvalue())
+            self.assertIn("org-02-security-and-secrets", f.getvalue())
+
+    def test_cli_add_strict_blocks_on_collision(self) -> None:
+        with patch("scripts.preference_manager.check_rule_collision") as mock_check:
+            mock_check.return_value = RuleCollisionResult(
+                has_collision=True,
+                summary="Collides with org security.",
+                conflicts=[
+                    RuleConflictDetail(
+                        rule_id="org-02-security-and-secrets",
+                        rule_title="Zero Hardcoded Credentials",
+                        tier="ORG",
+                        reason="Hardcoded keys forbidden.",
+                    )
+                ],
+            )
+
+            ret = main([
+                "--root-dir", str(self.root_dir),
+                "--rule-file", str(self.rule_file),
+                "--add", "Allow mock keys in dev",
+                "--strict",
+            ])
+            self.assertEqual(ret, 1)
 
 
 if __name__ == "__main__":

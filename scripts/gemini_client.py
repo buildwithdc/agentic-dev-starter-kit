@@ -78,6 +78,28 @@ REVIEW_SCHEMA: dict[str, Any] = {
     "required": ["passed", "summary", "violations"],
 }
 
+RULE_COLLISION_SCHEMA: dict[str, Any] = {
+    "type": "OBJECT",
+    "properties": {
+        "has_collision": {"type": "BOOLEAN"},
+        "summary": {"type": "STRING"},
+        "conflicts": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "rule_id": {"type": "STRING"},
+                    "rule_title": {"type": "STRING"},
+                    "tier": {"type": "STRING"},
+                    "reason": {"type": "STRING"},
+                },
+                "required": ["rule_id", "rule_title", "tier", "reason"],
+            },
+        },
+    },
+    "required": ["has_collision", "summary", "conflicts"],
+}
+
 
 @dataclass
 class ReviewViolation:
@@ -101,6 +123,26 @@ class ReviewResult:
     summary: str
     violations: list[ReviewViolation] = field(default_factory=list)
     cached: bool = False
+    degraded: bool = False
+
+
+@dataclass
+class RuleConflictDetail:
+    """Detail of a collision with a higher-tier rule."""
+
+    rule_id: str
+    rule_title: str
+    tier: str
+    reason: str
+
+
+@dataclass
+class RuleCollisionResult:
+    """Outcome of checking a proposed rule against higher-tier rules."""
+
+    has_collision: bool
+    summary: str
+    conflicts: list[RuleConflictDetail] = field(default_factory=list)
     degraded: bool = False
 
 
@@ -298,8 +340,30 @@ class GeminiReviewClient:
         except Exception:
             pass
 
+    def _resolve_auth(self) -> tuple[str | None, str | None]:
+        """Resolve authentication token or return error message."""
+        token: str | None = None
+        if not (self.config.backend in ("google_ai", "studio") and self.config.api_key):
+            token = get_adc_access_token(self.cache_dir)
+            if not token:
+                return None, (
+                    "Authentication skipped: Google ADC access token not found and GEMINI_API_KEY unset. "
+                    "Run 'gcloud auth application-default login' or export GEMINI_API_KEY to enable LLM checks."
+                )
+
+        if self.config.backend == "vertex" and not self.config.project_id:
+            return None, (
+                "Vertex AI skipped: GCP Project ID could not be determined. "
+                "Set GOOGLE_CLOUD_PROJECT or run 'gcloud config set project <PROJECT_ID>'."
+            )
+
+        return token, None
+
     def _prepare_request(
-        self, prompt: str, token: str | None
+        self,
+        prompt: str,
+        token: str | None,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, str], dict[str, Any]]:
         """Construct endpoint URL, headers, and payload according to configured backend."""
         payload = {
@@ -311,7 +375,7 @@ class GeminiReviewClient:
             ],
             "generationConfig": {
                 "response_mime_type": "application/json",
-                "response_schema": REVIEW_SCHEMA,
+                "response_schema": response_schema or REVIEW_SCHEMA,
                 "temperature": 0.1,
             },
         }
@@ -347,6 +411,85 @@ class GeminiReviewClient:
 
         return url, headers, payload
 
+    def check_rule_collision(
+        self,
+        proposed_rule: str,
+        higher_tier_rules_text: str,
+    ) -> RuleCollisionResult:
+        """Evaluate whether a proposed personal preference semantically conflicts with or weakens higher-tier rules (Org, Team)."""
+        clean_rule = proposed_rule.strip()
+        if not clean_rule:
+            return RuleCollisionResult(has_collision=False, summary="Empty rule text.")
+
+        token, err = self._resolve_auth()
+        if err:
+            return RuleCollisionResult(
+                has_collision=False,
+                summary=err,
+                degraded=True,
+            )
+
+        prompt = (
+            "You are an authoritative AI rules governance auditor. Evaluate whether the following "
+            "proposed developer personal preference semantically conflicts with, relaxes, carves out exceptions to, "
+            "or weakens any higher-tier canonical rules (Tier 1 Organization or Tier 2 Team).\n\n"
+            f"### CANONICAL HIGHER-TIER RULES:\n{higher_tier_rules_text}\n\n"
+            f"### PROPOSED PERSONAL PREFERENCE:\n{clean_rule}\n\n"
+            "Evaluation Criteria:\n"
+            "1. Non-Weakening Invariant: Personal preferences may specialize workflows or add stricter requirements, "
+            "but can NEVER contradict, weaken, bypass, or carve out exceptions to Organization or Team rules.\n"
+            "2. If the proposed preference permits something a higher-tier rule forbids (e.g. hardcoding secrets, "
+            "skipping branch protection/PRs, committing directly to main, suppressing mock warnings, skipping typed schemas), "
+            "flag this as a collision (has_collision=true) and specify which rule is violated.\n"
+            "3. If it is a benign personal habit, workflow preference, or stylistic choice that does not violate any "
+            "higher-tier invariants, set has_collision=false and conflicts=[].\n"
+            "4. Return strictly valid JSON adhering to the provided schema."
+        )
+
+        url, headers, payload = self._prepare_request(
+            prompt, token, response_schema=RULE_COLLISION_SCHEMA
+        )
+
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
+                resp_data = json.loads(resp.read().decode("utf-8"))
+                candidate = resp_data.get("candidates", [{}])[0]
+                text = (
+                    candidate.get("content", {})
+                    .get("parts", [{}])[0]
+                    .get("text", "{}")
+                )
+                raw_json = json.loads(text)
+
+                conflicts = [
+                    RuleConflictDetail(
+                        rule_id=str(c.get("rule_id", "")),
+                        rule_title=str(c.get("rule_title", "")),
+                        tier=str(c.get("tier", "")).upper(),
+                        reason=str(c.get("reason", "")),
+                    )
+                    for c in raw_json.get("conflicts", [])
+                ]
+
+                return RuleCollisionResult(
+                    has_collision=bool(raw_json.get("has_collision", False)) or len(conflicts) > 0,
+                    summary=raw_json.get("summary", "Rule collision evaluation complete."),
+                    conflicts=conflicts,
+                )
+        except Exception as e:
+            return RuleCollisionResult(
+                has_collision=False,
+                summary=f"Collision check failed due to request error: {e}",
+                degraded=True,
+            )
+
     def review_diff(
         self,
         diff_text: str,
@@ -366,28 +509,11 @@ class GeminiReviewClient:
         if cached is not None:
             return cached
 
-        # Resolve authentication
-        token: str | None = None
-        if not (self.config.backend in ("google_ai", "studio") and self.config.api_key):
-            token = get_adc_access_token(self.cache_dir)
-            if not token:
-                return ReviewResult(
-                    passed=True,
-                    summary=(
-                        "Review skipped: Google ADC access token not found and GEMINI_API_KEY unset. "
-                        "Run 'gcloud auth application-default login' or export GEMINI_API_KEY to enable LLM pre-commit checks."
-                    ),
-                    violations=[],
-                    degraded=True,
-                )
-
-        if self.config.backend == "vertex" and not self.config.project_id:
+        token, err = self._resolve_auth()
+        if err:
             return ReviewResult(
                 passed=True,
-                summary=(
-                    "Review skipped: GCP Project ID could not be determined for Vertex AI. "
-                    "Set GOOGLE_CLOUD_PROJECT or run 'gcloud config set project <PROJECT_ID>'."
-                ),
+                summary=err,
                 violations=[],
                 degraded=True,
             )
@@ -403,7 +529,12 @@ class GeminiReviewClient:
             "2. Assign severity 'CRITICAL' for hard security secrets / main branch bypass, "
             "'ERROR' for broken typed interfaces or missing mock warnings, and 'WARN' for general advice.\n"
             "3. If no violations exist, set passed=true and violations=[].\n"
-            "4. Return strictly valid JSON adhering to the provided schema."
+            "4. Return strictly valid JSON adhering to the provided schema.\n"
+            "5. HIERARCHICAL PRECEDENCE DIRECTIVE: Rules tagged [Tier: ORG] strictly supersede [Tier: TEAM], "
+            "which strictly supersede [Tier: PERSONAL]. If a lower-tier rule attempts to permit, relax, "
+            "carve out exceptions to, or contradict a constraint mandated by a higher-tier rule, you MUST "
+            "disregard the lower-tier allowance and strictly enforce the higher-tier requirement. "
+            "Lower tiers can ONLY add stricter constraints, never weaken higher ones."
         )
 
         url, headers, payload = self._prepare_request(prompt, token)
