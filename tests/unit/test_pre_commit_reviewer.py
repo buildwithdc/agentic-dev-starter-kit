@@ -356,6 +356,61 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
         self.assertIn("decision: PASSED", content)
         self.assertIn("commit: ", content)
 
+    @patch("urllib.request.urlopen")
+    def test_check_rule_collision_detects_conflict(self, mock_urlopen) -> None:
+        inner_json = json.dumps({
+            "has_collision": True,
+            "summary": "Proposed rule conflicts with zero-hardcoded-secrets policy.",
+            "conflicts": [
+                {
+                    "rule_id": "org-02-security-and-secrets",
+                    "rule_title": "Zero Hardcoded Credentials",
+                    "tier": "ORG",
+                    "reason": "Allows committing mock API keys, which violates enterprise policy.",
+                }
+            ],
+        })
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": inner_json}]}}]
+        }).encode("utf-8")
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        cfg = GeminiClientConfig(backend="google_ai", api_key="test-key")
+        client = GeminiReviewClient(config=cfg, cache_dir=self.cache_dir)
+        res = client.check_rule_collision(
+            proposed_rule="Allow hardcoded mock API tokens in test scripts",
+            higher_tier_rules_text="Never commit secrets or tokens.",
+        )
+        self.assertTrue(res.has_collision)
+        self.assertEqual(len(res.conflicts), 1)
+        self.assertEqual(res.conflicts[0].rule_id, "org-02-security-and-secrets")
+        self.assertEqual(res.conflicts[0].tier, "ORG")
+
+    @patch("urllib.request.urlopen")
+    def test_check_rule_collision_clean(self, mock_urlopen) -> None:
+        inner_json = json.dumps({
+            "has_collision": False,
+            "summary": "No conflicts found.",
+            "conflicts": [],
+        })
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": inner_json}]}}]
+        }).encode("utf-8")
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        cfg = GeminiClientConfig(backend="google_ai", api_key="test-key")
+        client = GeminiReviewClient(config=cfg, cache_dir=self.cache_dir)
+        res = client.check_rule_collision(
+            proposed_rule="Always prefer f-strings over percent formatting",
+            higher_tier_rules_text="Code standards.",
+        )
+        self.assertFalse(res.has_collision)
+        self.assertEqual(len(res.conflicts), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

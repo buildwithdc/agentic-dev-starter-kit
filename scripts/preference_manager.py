@@ -14,12 +14,65 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 try:
-    from scripts.constants import DEFAULT_PERSONAL_PREFERENCES_PATH
+    from scripts.constants import (
+        DEFAULT_PERSONAL_PREFERENCES_PATH,
+        RULES_DIR_NAME,
+    )
+    from scripts.gemini_client import (
+        GeminiReviewClient,
+        RuleCollisionResult,
+    )
+    from scripts.rule_loader import load_rules
 except ImportError:
-    from constants import DEFAULT_PERSONAL_PREFERENCES_PATH
+    from constants import (
+        DEFAULT_PERSONAL_PREFERENCES_PATH,
+        RULES_DIR_NAME,
+    )
+    from gemini_client import (
+        GeminiReviewClient,
+        RuleCollisionResult,
+    )
+    from rule_loader import load_rules
 
 DEFAULT_RULE_RELATIVE_PATH = DEFAULT_PERSONAL_PREFERENCES_PATH
+
+
+def check_rule_collision(
+    rule_text: str,
+    rules_dir: Path | str = RULES_DIR_NAME,
+    root_dir: Path | str = ".",
+    client: GeminiReviewClient | None = None,
+) -> RuleCollisionResult:
+    """Evaluate whether proposed personal preference semantically conflicts with higher-tier rules (Org, Team) using Gemini LLM."""
+    clean_rule = rule_text.strip()
+    if not clean_rule:
+        return RuleCollisionResult(has_collision=False, summary="Empty rule text.")
+
+    resolved_root = Path(root_dir).resolve()
+    rpath = resolved_root / rules_dir if not Path(rules_dir).is_absolute() else Path(rules_dir)
+    if not rpath.is_dir():
+        return RuleCollisionResult(has_collision=False, summary=f"Rules directory not found: {rpath}")
+
+    # Load only Tier 1 (Org) and Tier 2 (Team) rules
+    higher_rules = load_rules(rpath, include_personal=False, include_global=False)
+    if not higher_rules:
+        return RuleCollisionResult(has_collision=False, summary="No higher-tier rules found to evaluate against.")
+
+    rules_summary = "\n\n".join(
+        f"--- Rule: {r.id} ({r.title}) [Tier: {r.tier.upper()}] [Default Severity: {r.severity_default}] ---\n{r.content}"
+        for r in higher_rules
+    )
+
+    llm_client = client or GeminiReviewClient()
+    return llm_client.check_rule_collision(
+        proposed_rule=clean_rule,
+        higher_tier_rules_text=rules_summary,
+    )
 
 DEFAULT_TEMPLATE = """---
 id: personal-01-preferences
@@ -341,10 +394,45 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Output in JSON format",
     )
+    parser.add_argument(
+        "--check-collision",
+        metavar="RULE_TEXT",
+        help="Check if a proposed preference semantically conflicts with higher-tiered rules (Org, Team) via Gemini",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Enforce Gemini semantic collision check before adding rule via --add",
+    )
 
     args = parser.parse_args(argv)
 
+    if args.check_collision:
+        result = check_rule_collision(
+            args.check_collision,
+            root_dir=args.root_dir,
+        )
+        if result.degraded:
+            print(f"⚠️ {result.summary}", file=sys.stderr)
+            return 0
+        if result.has_collision:
+            print("❌ Semantic collision detected with higher-tiered rules:")
+            for c in result.conflicts:
+                print(f"  - [{c.tier}] {c.rule_id} ({c.rule_title}): {c.reason}")
+            return 1
+        else:
+            print("✅ No collisions detected with higher-tiered rules (Org / Team).")
+            return 0
+
     if args.add:
+        if args.strict:
+            collision_res = check_rule_collision(args.add, root_dir=args.root_dir)
+            if collision_res.has_collision:
+                print("❌ Cannot add preference: semantic collision detected with higher-tier rules:", file=sys.stderr)
+                for c in collision_res.conflicts:
+                    print(f"  - [{c.tier}] {c.rule_id} ({c.rule_title}): {c.reason}", file=sys.stderr)
+                return 1
+
         success, msg = add_preference(
             rule_text=args.add,
             section=args.section,
