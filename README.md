@@ -1,7 +1,7 @@
 # Agentic Development Environment
 
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
-[![Model](https://img.shields.io/badge/model-gemini--3.7--flash-orange.svg)](https://deepmind.google/technologies/gemini/)
+[![Model](https://img.shields.io/badge/model-gemini--3.8--flash-orange.svg)](https://deepmind.google/technologies/gemini/)
 [![Assistants](https://img.shields.io/badge/assistants-Antigravity%20%7C%20Claude%20Code%20%7C%20Cursor-green.svg)](AGENTS.md)
 [![License](https://img.shields.io/badge/license-MIT-purple.svg)](LICENSE)
 
@@ -12,7 +12,7 @@ This repository provides:
 2. **24-Hour Non-Blocking Background Org Rule Sync** (`scripts/sync_org_rules.py`): Automatically checks and updates enterprise rules in a detached background worker without delaying developers' pre-commit workflows.
 3. **Dynamic Multi-Assistant Tooling & Skills** (`scripts/install_tooling.py`): Zero repository clutter; generates Git hooks, Antigravity skills/hooks, and Claude Code commands on demand.
 4. **VCS-Isolated Personal Preference Persistence** (`scripts/preference_manager.py` & `.agents/rules/personal/`): Captures developer habits into persistent rules without polluting git diffs or creating repository merge conflicts.
-5. **Universal Pre-Commit Review Engine** (`scripts/pre_commit_reviewer.py` & `scripts/gemini_client.py`): Gemini 3.7 Flash powered diff evaluation supporting Google Application Default Credentials (ADC) and Google AI Studio, with SHA-256 diff caching and a non-weakening multi-tier gating policy.
+5. **Universal Pre-Commit Review Engine** (`scripts/pre_commit_reviewer.py` & `scripts/gemini_client.py`): Gemini 3.8 Flash powered diff evaluation supporting Google Application Default Credentials (ADC) and Google AI Studio, with SHA-256 diff caching and a non-weakening multi-tier gating policy.
 6. **Authoritative CI Gatekeeper** (`.github/workflows/ai_rules_audit.yml`): "Two-Grip" governance model providing local pre-commit assistance paired with mandatory remote CI compliance.
 7. **Portable Standalone Distribution** (`scripts/package_tooling.py`): One-command packaging and extraction into any target repository.
 
@@ -61,7 +61,7 @@ sequenceDiagram
     participant Hook as .git/hooks/pre-commit
     participant Reviewer as pre_commit_reviewer.py
     participant Worker as sync_org_rules.py (Detached)
-    participant Engine as Gemini 3.7 Flash Engine
+    participant Engine as Gemini 3.8 Flash Engine
     participant Central as Central Rules Endpoint / Org Repo
 
     DevOrAgent->>Git: git commit -m "feat(auth): add login handler"
@@ -182,7 +182,7 @@ Organizations maintain canonical Tier 1 rules in a dedicated central governance 
 │   └── dev-env-tooling.zip            # Standalone portable tooling distribution bundle
 ├── scripts/
 │   ├── constants.py                   # Centralized repository constants for rule paths & tiers
-│   ├── gemini_client.py               # Gemini 3.7 Flash review client (Vertex AI & Google AI Studio)
+│   ├── gemini_client.py               # Gemini 3.8 Flash review client (Vertex AI & Google AI Studio)
 │   ├── install_tooling.py             # Dynamic assistant tooling & hook generator
 │   ├── package_tooling.py             # Portable workspace bundler & extractor
 │   ├── pre_commit_reviewer.py         # Universal pre-commit review CLI & gating engine
@@ -226,7 +226,7 @@ Organizations maintain canonical Tier 1 rules in a dedicated central governance 
    git add .
    git commit -m "feat(core): implement feature"
    ```
-   The pre-commit hook automatically checks organizational rule freshness, loads rules across all tiers, and reviews staged diffs using Gemini 3.7 Flash.
+   The pre-commit hook automatically checks organizational rule freshness, loads rules across all tiers, and reviews staged diffs using Gemini 3.8 Flash.
 
 ---
 
@@ -288,7 +288,7 @@ Executes pre-commit review against staged changes across all tiers.
 python3 scripts/pre_commit_reviewer.py                       # Run review against staged changes
 python3 scripts/pre_commit_reviewer.py --skip-llm           # Bypass LLM evaluation
 python3 scripts/pre_commit_reviewer.py --backend google_ai  # Use Google AI Studio backend
-python3 scripts/pre_commit_reviewer.py --model gemini-3.7-flash
+python3 scripts/pre_commit_reviewer.py --model gemini-3.8-flash
 ```
 
 ### `scripts/preference_manager.py`
