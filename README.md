@@ -172,9 +172,12 @@ Organizations maintain canonical Tier 1 rules in a dedicated central governance 
 │   ├── hooks.json                     # Dynamic Antigravity lifecycle hook config (generated)
 │   └── audit.log                      # Local audit and sync execution history
 ├── .claude/
-│   └── commands/                      # Dynamic Claude Code slash commands (generated)
-│       ├── audit.md                   # /audit command
-│       └── preferences.md             # /preferences command
+│   ├── commands/                      # Dynamic Claude Code slash commands (generated)
+│   │   ├── audit.md                   # /audit command
+│   │   └── preferences.md             # /preferences command
+│   └── skills/                        # Dynamic Claude Code on-demand skills (generated)
+│       ├── code-auditor/SKILL.md      # On-demand pre-commit diff audit skill
+│       └── personal-preferences/SKILL.md # Workflow preference capture & rule persistence skill
 ├── .github/
 │   └── workflows/
 │       └── ai_rules_audit.yml         # Authoritative CI server-side compliance gate
@@ -219,7 +222,7 @@ Organizations maintain canonical Tier 1 rules in a dedicated central governance 
    ```bash
    python3 scripts/install_tooling.py --all
    ```
-   This generates the native `.git/hooks/pre-commit`, Antigravity skills & hooks (`.agents/`), and Claude Code command (`.claude/commands/audit.md`).
+   This generates the native `.git/hooks/pre-commit`, Antigravity skills & hooks (`.agents/`), and Claude Code commands & skills (`.claude/`).
 
 3. **Stage Changes & Commit**:
    ```bash
