@@ -2,7 +2,7 @@
 """Dynamic Assistant Tooling Installer.
 
 Generates and registers assistant-specific hooks, skills, and memory files
-(Git pre-commit hook, Antigravity skills/hooks, Claude Code commands/memory, AGENTS.md pointer)
+(Git pre-commit hook, Antigravity skills/hooks, Claude Code commands/skills/memory, AGENTS.md pointer)
 from canonical rules without manual repository clutter.
 """
 
@@ -35,7 +35,7 @@ GIT_HOOK_TEMPLATE = """#!/bin/sh
 python3 scripts/pre_commit_reviewer.py
 """
 
-ANTIGRAVITY_AUDIT_SKILL_TEMPLATE = """---
+AUDIT_SKILL_TEMPLATE = """---
 name: code-auditor
 description: Audits staged or working-tree code diffs against repository canonical best-practice rules in .agents/rules/.
 ---
@@ -51,7 +51,7 @@ This skill allows the agent to evaluate current git changes against the reposito
 4. Address `WARN` advisories if applicable to current task scope.
 """
 
-ANTIGRAVITY_PREFERENCES_SKILL_TEMPLATE = f"""---
+PREFERENCES_SKILL_TEMPLATE = f"""---
 name: personal-preferences
 description: Captures, updates, and persists developer workflow preferences, habits, and engineering conventions into {DEFAULT_PERSONAL_PREFERENCES_PATH}. Detects generally applicable workflow comments and always requests explicit user confirmation before recording new rules.
 ---
@@ -266,12 +266,12 @@ def install_antigravity(root_dir: Path) -> bool:
     audit_skill_dir = root_dir / ".agents" / "skills" / "code-auditor"
     audit_skill_dir.mkdir(parents=True, exist_ok=True)
     audit_skill_file = audit_skill_dir / "SKILL.md"
-    audit_skill_file.write_text(ANTIGRAVITY_AUDIT_SKILL_TEMPLATE, encoding="utf-8")
+    audit_skill_file.write_text(AUDIT_SKILL_TEMPLATE, encoding="utf-8")
 
     pref_skill_dir = root_dir / ".agents" / "skills" / "personal-preferences"
     pref_skill_dir.mkdir(parents=True, exist_ok=True)
     pref_skill_file = pref_skill_dir / "SKILL.md"
-    pref_skill_file.write_text(ANTIGRAVITY_PREFERENCES_SKILL_TEMPLATE, encoding="utf-8")
+    pref_skill_file.write_text(PREFERENCES_SKILL_TEMPLATE, encoding="utf-8")
 
     hooks_file = root_dir / ".agents" / "hooks.json"
     hooks_file.write_text(ANTIGRAVITY_HOOKS_TEMPLATE, encoding="utf-8")
@@ -310,7 +310,9 @@ def ensure_agents_file(root_dir: Path, assume_yes: bool = False) -> bool:
 
 
 def install_claude(root_dir: Path, assume_yes: bool = False) -> bool:
-    """Install Claude Code commands and update existing CLAUDE.md if present."""
+    """Install Claude Code commands, prepackaged skills, and update existing CLAUDE.md if present."""
+    ensure_tiered_rule_directories(root_dir)
+
     commands_dir = root_dir / ".claude" / "commands"
     commands_dir.mkdir(parents=True, exist_ok=True)
 
@@ -322,6 +324,19 @@ def install_claude(root_dir: Path, assume_yes: bool = False) -> bool:
 
     print(f"✅ Installed Claude Code command -> {audit_command_file}")
     print(f"✅ Installed Claude Code command -> {pref_command_file}")
+
+    audit_skill_dir = root_dir / ".claude" / "skills" / "code-auditor"
+    audit_skill_dir.mkdir(parents=True, exist_ok=True)
+    audit_skill_file = audit_skill_dir / "SKILL.md"
+    audit_skill_file.write_text(AUDIT_SKILL_TEMPLATE, encoding="utf-8")
+
+    pref_skill_dir = root_dir / ".claude" / "skills" / "personal-preferences"
+    pref_skill_dir.mkdir(parents=True, exist_ok=True)
+    pref_skill_file = pref_skill_dir / "SKILL.md"
+    pref_skill_file.write_text(PREFERENCES_SKILL_TEMPLATE, encoding="utf-8")
+
+    print(f"✅ Installed Claude Code skill -> {audit_skill_file}")
+    print(f"✅ Installed Claude Code skill -> {pref_skill_file}")
 
     claude_file = find_existing_file(root_dir, ("CLAUDE.md", "claude.md"))
     if claude_file and claude_file.is_file():
@@ -385,6 +400,27 @@ def clean_tooling(root_dir: Path) -> None:
     claude_cmd_dir = root_dir / ".claude" / "commands"
     if claude_cmd_dir.exists() and not any(claude_cmd_dir.iterdir()):
         claude_cmd_dir.rmdir()
+
+    claude_audit_skill = root_dir / ".claude" / "skills" / "code-auditor" / "SKILL.md"
+    if claude_audit_skill.exists():
+        claude_audit_skill.unlink()
+        print(f"🗑️  Removed {claude_audit_skill}")
+    claude_audit_dir = root_dir / ".claude" / "skills" / "code-auditor"
+    if claude_audit_dir.exists() and not any(claude_audit_dir.iterdir()):
+        claude_audit_dir.rmdir()
+
+    claude_pref_skill = root_dir / ".claude" / "skills" / "personal-preferences" / "SKILL.md"
+    if claude_pref_skill.exists():
+        claude_pref_skill.unlink()
+        print(f"🗑️  Removed {claude_pref_skill}")
+    claude_pref_dir = root_dir / ".claude" / "skills" / "personal-preferences"
+    if claude_pref_dir.exists() and not any(claude_pref_dir.iterdir()):
+        claude_pref_dir.rmdir()
+
+    claude_skills_dir = root_dir / ".claude" / "skills"
+    if claude_skills_dir.exists() and not any(claude_skills_dir.iterdir()):
+        claude_skills_dir.rmdir()
+
     claude_dir = root_dir / ".claude"
     if claude_dir.exists() and not any(claude_dir.iterdir()):
         claude_dir.rmdir()
@@ -426,7 +462,7 @@ def main() -> None:
     parser.add_argument("--all", action="store_true", help="Install all tooling, hooks, and guidelines")
     parser.add_argument("--git-hook", action="store_true", help="Install Git pre-commit hook")
     parser.add_argument("--antigravity", action="store_true", help="Install Antigravity skills & hooks")
-    parser.add_argument("--claude", action="store_true", help="Install Claude Code commands & memory pointer")
+    parser.add_argument("--claude", action="store_true", help="Install Claude Code commands, skills & memory pointer")
     parser.add_argument("--agents", action="store_true", help="Ensure AGENTS.md canonical rules pointer")
     parser.add_argument("--clean", action="store_true", help="Remove all generated assistant artifacts")
     parser.add_argument("-y", "--yes", action="store_true", help="Automatically accept insert-only pointer injection prompts")

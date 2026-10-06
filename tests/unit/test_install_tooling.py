@@ -53,9 +53,11 @@ class TestInstallTooling(unittest.TestCase):
         self.assertFalse(claude_file.exists())
         self.assertFalse(claude_lower.exists())
 
-        # Slash commands and Antigravity tooling should exist
+        # Slash commands, prepackaged skills, and Antigravity tooling should exist
         self.assertTrue((self.root_dir / ".claude" / "commands" / "audit.md").exists())
         self.assertTrue((self.root_dir / ".claude" / "commands" / "preferences.md").exists())
+        self.assertTrue((self.root_dir / ".claude" / "skills" / "code-auditor" / "SKILL.md").exists())
+        self.assertTrue((self.root_dir / ".claude" / "skills" / "personal-preferences" / "SKILL.md").exists())
         self.assertTrue((self.root_dir / ".agents" / "skills" / "code-auditor" / "SKILL.md").exists())
         self.assertTrue((self.root_dir / ".agents" / "skills" / "personal-preferences" / "SKILL.md").exists())
 
@@ -68,6 +70,10 @@ class TestInstallTooling(unittest.TestCase):
         clean_tooling(self.root_dir)
         self.assertFalse(agents_file.exists())  # Was empty template, so unlinked
         self.assertFalse((self.root_dir / ".claude" / "commands" / "audit.md").exists())
+        self.assertFalse((self.root_dir / ".claude" / "commands" / "preferences.md").exists())
+        self.assertFalse((self.root_dir / ".claude" / "skills" / "code-auditor" / "SKILL.md").exists())
+        self.assertFalse((self.root_dir / ".claude" / "skills" / "personal-preferences" / "SKILL.md").exists())
+        self.assertFalse((self.root_dir / ".claude").exists())
         self.assertFalse((self.root_dir / ".agents" / "skills" / "code-auditor" / "SKILL.md").exists())
 
     def test_existing_agents_md_with_permission(self) -> None:
@@ -180,6 +186,40 @@ class TestInstallTooling(unittest.TestCase):
 
         self.assertEqual(first_content, second_content)
         self.assertEqual(second_content.count("BEGIN CANONICAL RULES POINTER"), 1)
+
+    def test_install_claude_commands_and_skills(self) -> None:
+        """Verifies that install_claude provisions both slash commands and prepackaged skills."""
+        ok = install_claude(self.root_dir, assume_yes=True)
+        self.assertTrue(ok)
+
+        # Commands
+        audit_cmd = self.root_dir / ".claude" / "commands" / "audit.md"
+        pref_cmd = self.root_dir / ".claude" / "commands" / "preferences.md"
+        self.assertTrue(audit_cmd.is_file())
+        self.assertTrue(pref_cmd.is_file())
+
+        # Skills
+        audit_skill = self.root_dir / ".claude" / "skills" / "code-auditor" / "SKILL.md"
+        pref_skill = self.root_dir / ".claude" / "skills" / "personal-preferences" / "SKILL.md"
+        self.assertTrue(audit_skill.is_file())
+        self.assertTrue(pref_skill.is_file())
+
+        # Verify content
+        audit_content = audit_skill.read_text(encoding="utf-8")
+        self.assertIn("name: code-auditor", audit_content)
+        self.assertIn("pre_commit_reviewer.py", audit_content)
+
+        pref_content = pref_skill.read_text(encoding="utf-8")
+        self.assertIn("name: personal-preferences", pref_content)
+        self.assertIn("preference_manager.py", pref_content)
+
+        # Clean
+        clean_tooling(self.root_dir)
+        self.assertFalse(audit_cmd.exists())
+        self.assertFalse(pref_cmd.exists())
+        self.assertFalse(audit_skill.exists())
+        self.assertFalse(pref_skill.exists())
+        self.assertFalse((self.root_dir / ".claude").exists())
 
 
 if __name__ == "__main__":
