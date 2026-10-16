@@ -311,15 +311,17 @@ python3 scripts/package_tooling.py --extract /path/to/target --install # Extract
 ```
 
 ### `scripts/install_tooling.py`
-Dynamically registers or cleans assistant hooks and configurations (installing for any specific coding agent automatically includes the native Git `pre-commit` hook).
+Dynamically registers or cleans assistant hooks and configurations (installing for any specific coding agent automatically includes the native Git `pre-commit` hook). If neither `--gitignore` nor `--no-gitignore` is passed, the installer interactively prompts whether to add installed files and ported scripts to `.gitignore`.
 ```bash
 python3 scripts/install_tooling.py --all          # Install Git pre-commit, Antigravity, AGENTS pointer, and Claude tooling
 python3 scripts/install_tooling.py --git-hook    # Install only the native Git pre-commit hook
 python3 scripts/install_tooling.py --antigravity # Install Antigravity skills/hooks + Git pre-commit hook
 python3 scripts/install_tooling.py --agents      # Ensure AGENTS.md rules pointer + Git pre-commit hook
 python3 scripts/install_tooling.py --claude      # Install Claude Code commands/skills + Git pre-commit hook
+python3 scripts/install_tooling.py --gitignore   # Add installed files, generated artifacts & ported scripts to .gitignore
+python3 scripts/install_tooling.py --no-gitignore # Skip modifying .gitignore without prompting
 python3 scripts/install_tooling.py -y            # Automatically accept insert-only pointer injection prompts
-python3 scripts/install_tooling.py --clean       # Remove all generated assistant artifacts
+python3 scripts/install_tooling.py --clean       # Remove all generated assistant artifacts and managed .gitignore entries
 ```
 
 ---

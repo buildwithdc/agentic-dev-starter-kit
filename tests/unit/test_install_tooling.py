@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
 """Unit tests for tooling installer and assistant memory handling."""
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from scripts.install_tooling import (
+    GITIGNORE_END_TAG,
+    GITIGNORE_START_TAG,
+    PORTED_TOOLING_SCRIPTS,
     clean_tooling,
     ensure_agents_file,
     install_antigravity,
     install_claude,
     install_git_hook,
+    update_gitignore,
+)
+from scripts.install_tooling import (
+    main as install_main,
 )
 
 
@@ -242,6 +250,112 @@ class TestInstallTooling(unittest.TestCase):
 
         clean_tooling(self.root_dir)
         self.assertFalse(git_hook.exists())
+
+    def test_gitignore_flag_adds_installed_files_and_scripts(self) -> None:
+        """Verifies --gitignore adds ported scripts, generated agent files, and runtime state to .gitignore."""
+        gitignore_file = self.root_dir / ".gitignore"
+        gitignore_file.write_text("# Existing project rules\nnode_modules/\n", encoding="utf-8")
+
+        with patch.object(
+            sys,
+            "argv",
+            ["install_tooling.py", "--all", "--gitignore", "--root-dir", str(self.root_dir)],
+        ):
+            install_main()
+
+        self.assertTrue(gitignore_file.is_file())
+        content = gitignore_file.read_text(encoding="utf-8")
+        self.assertTrue(content.startswith("# Existing project rules\nnode_modules/"))
+        self.assertIn(GITIGNORE_START_TAG, content)
+        self.assertIn(GITIGNORE_END_TAG, content)
+
+        # Ported scripts must be listed
+        for script_rel in PORTED_TOOLING_SCRIPTS:
+            self.assertIn(script_rel, content)
+
+        # Generated Antigravity, Claude, newly created AGENTS.md, all rules, and runtime state must be listed
+        self.assertIn(".agents/skills/code-auditor/", content)
+        self.assertIn(".agents/hooks.json", content)
+        self.assertIn(".claude/commands/audit.md", content)
+        self.assertIn(".claude/skills/code-auditor/", content)
+        self.assertIn("AGENTS.md", content)
+        self.assertIn(".agents/rules/", content)
+        self.assertIn(".agents/rules/org/", content)
+        self.assertIn(".agents/rules/team/", content)
+        self.assertIn(".agents/rules/personal/", content)
+        self.assertIn(".agents/audit.log", content)
+
+        # Clean should remove managed gitignore block while preserving existing user rules
+        clean_tooling(self.root_dir)
+        cleaned_content = gitignore_file.read_text(encoding="utf-8")
+        self.assertNotIn(GITIGNORE_START_TAG, cleaned_content)
+        self.assertEqual(cleaned_content.strip(), "# Existing project rules\nnode_modules/")
+
+    @patch("builtins.input")
+    def test_no_gitignore_flag_skips_without_prompt(self, mock_input) -> None:
+        """Verifies --no-gitignore does not prompt and does not create or modify .gitignore."""
+        gitignore_file = self.root_dir / ".gitignore"
+
+        with patch.object(
+            sys,
+            "argv",
+            ["install_tooling.py", "--all", "--no-gitignore", "--root-dir", str(self.root_dir)],
+        ):
+            install_main()
+
+        mock_input.assert_not_called()
+        self.assertFalse(gitignore_file.exists())
+
+    @patch("builtins.input", return_value="y")
+    def test_gitignore_interactive_prompt_accept(self, mock_input) -> None:
+        """Verifies interactive prompt adds entries to .gitignore when neither flag is passed and user answers 'y'."""
+        gitignore_file = self.root_dir / ".gitignore"
+
+        with patch.object(
+            sys,
+            "argv",
+            ["install_tooling.py", "--antigravity", "--root-dir", str(self.root_dir)],
+        ):
+            install_main()
+
+        mock_input.assert_called_once()
+        self.assertTrue(gitignore_file.is_file())
+        content = gitignore_file.read_text(encoding="utf-8")
+        self.assertIn(".agents/hooks.json", content)
+        self.assertIn("scripts/pre_commit_reviewer.py", content)
+        self.assertNotIn(".claude/commands/audit.md", content)
+
+        # Clean removes .gitignore completely when it only contained the managed block
+        clean_tooling(self.root_dir)
+        self.assertFalse(gitignore_file.exists())
+
+    @patch("builtins.input", return_value="n")
+    def test_gitignore_interactive_prompt_decline(self, mock_input) -> None:
+        """Verifies interactive prompt skips .gitignore when neither flag is passed and user answers 'n'."""
+        gitignore_file = self.root_dir / ".gitignore"
+
+        with patch.object(
+            sys,
+            "argv",
+            ["install_tooling.py", "--claude", "--root-dir", str(self.root_dir)],
+        ):
+            install_main()
+
+        mock_input.assert_called_once()
+        self.assertFalse(gitignore_file.exists())
+
+    def test_gitignore_incremental_agent_installs_merge_entries(self) -> None:
+        """Verifies installing --antigravity then --claude with --gitignore merges both sets of entries."""
+        install_antigravity(self.root_dir)
+        update_gitignore(self.root_dir, include_antigravity=True, include_claude=False, include_agents_md=False)
+
+        install_claude(self.root_dir, assume_yes=True)
+        update_gitignore(self.root_dir, include_antigravity=False, include_claude=True, include_agents_md=False)
+
+        content = (self.root_dir / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn(".agents/hooks.json", content)
+        self.assertIn(".claude/commands/audit.md", content)
+        self.assertEqual(content.count(GITIGNORE_START_TAG), 1)
 
 
 if __name__ == "__main__":

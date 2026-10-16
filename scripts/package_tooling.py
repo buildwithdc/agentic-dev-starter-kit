@@ -77,10 +77,10 @@ and dynamic installers for Antigravity, Claude Code, and Git hooks.
 2. Run the dynamic installer to wire up Git pre-commit hooks and assistant configurations:
    ```bash
    cd /path/to/target-workspace
-   python3 scripts/install_tooling.py --all
+   python3 scripts/install_tooling.py --all --gitignore
    # Or for a specific coding agent (automatically includes the Git pre-commit hook):
-   # python3 scripts/install_tooling.py --antigravity
-   # python3 scripts/install_tooling.py --claude
+   # python3 scripts/install_tooling.py --antigravity --gitignore
+   # python3 scripts/install_tooling.py --claude --no-gitignore
    ```
 
 3. (Optional) Configure Gemini API for LLM-powered reviews:
@@ -243,6 +243,7 @@ def extract_tooling(
     destination_dir: Path | str,
     run_install: bool = False,
     assume_yes: bool = False,
+    gitignore: bool | None = None,
 ) -> list[str]:
     """Extract tooling archive into a destination directory and optionally run installer.
 
@@ -292,6 +293,10 @@ def extract_tooling(
             cmd = [sys.executable, str(installer), "--all", "--root-dir", str(dest)]
             if assume_yes:
                 cmd.append("-y")
+            if gitignore is True:
+                cmd.append("--gitignore")
+            elif gitignore is False:
+                cmd.append("--no-gitignore")
             subprocess.run(
                 cmd,
                 check=True,
@@ -351,6 +356,21 @@ def main() -> None:
         action="store_true",
         help="Automatically accept insert-only pointer injection prompts during install",
     )
+    gitignore_group = parser.add_mutually_exclusive_group()
+    gitignore_group.add_argument(
+        "--gitignore",
+        dest="gitignore",
+        action="store_true",
+        default=None,
+        help="Add installed tooling files and scripts to .gitignore during --install",
+    )
+    gitignore_group.add_argument(
+        "--no-gitignore",
+        dest="gitignore",
+        action="store_false",
+        default=None,
+        help="Do not add installed tooling files to .gitignore during --install",
+    )
     parser.add_argument(
         "--quiet",
         action="store_true",
@@ -378,6 +398,7 @@ def main() -> None:
             destination_dir=dest,
             run_install=args.install,
             assume_yes=args.yes,
+            gitignore=args.gitignore,
         )
         if not args.quiet:
             print(f"✅ Extracted {len(extracted)} files to {dest}")
