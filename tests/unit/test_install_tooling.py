@@ -273,13 +273,16 @@ class TestInstallTooling(unittest.TestCase):
         for script_rel in PORTED_TOOLING_SCRIPTS:
             self.assertIn(script_rel, content)
 
-        # Generated Antigravity, Claude, newly created AGENTS.md, and runtime state must be listed
+        # Generated Antigravity, Claude, newly created AGENTS.md, all rules, and runtime state must be listed
         self.assertIn(".agents/skills/code-auditor/", content)
         self.assertIn(".agents/hooks.json", content)
         self.assertIn(".claude/commands/audit.md", content)
         self.assertIn(".claude/skills/code-auditor/", content)
         self.assertIn("AGENTS.md", content)
-        self.assertIn(".agents/rules/personal/*", content)
+        self.assertIn(".agents/rules/", content)
+        self.assertIn(".agents/rules/org/", content)
+        self.assertIn(".agents/rules/team/", content)
+        self.assertIn(".agents/rules/personal/", content)
         self.assertIn(".agents/audit.log", content)
 
         # Clean should remove managed gitignore block while preserving existing user rules
