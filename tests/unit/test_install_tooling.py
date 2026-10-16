@@ -221,6 +221,28 @@ class TestInstallTooling(unittest.TestCase):
         self.assertFalse(pref_skill.exists())
         self.assertFalse((self.root_dir / ".claude").exists())
 
+    def test_agent_specific_install_includes_git_hook(self) -> None:
+        """Verifies that installing for any specific coding agent also installs the Git pre-commit hook."""
+        git_hook = self.root_dir / ".git" / "hooks" / "pre-commit"
+        self.assertFalse(git_hook.exists())
+
+        # 1. Antigravity-only install should install git hook
+        install_antigravity(self.root_dir)
+        self.assertTrue(git_hook.is_file())
+        self.assertIn("pre_commit_reviewer.py", git_hook.read_text(encoding="utf-8"))
+
+        # Clean and verify hook removed
+        clean_tooling(self.root_dir)
+        self.assertFalse(git_hook.exists())
+
+        # 2. Claude-only install should install git hook
+        install_claude(self.root_dir, assume_yes=True)
+        self.assertTrue(git_hook.is_file())
+        self.assertIn("pre_commit_reviewer.py", git_hook.read_text(encoding="utf-8"))
+
+        clean_tooling(self.root_dir)
+        self.assertFalse(git_hook.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -260,7 +260,8 @@ def install_git_hook(root_dir: Path) -> bool:
 
 
 def install_antigravity(root_dir: Path) -> bool:
-    """Install Antigravity skills and hooks configuration."""
+    """Install Antigravity skills, hooks configuration, and Git pre-commit hook."""
+    install_git_hook(root_dir)
     ensure_tiered_rule_directories(root_dir)
 
     audit_skill_dir = root_dir / ".agents" / "skills" / "code-auditor"
@@ -310,7 +311,8 @@ def ensure_agents_file(root_dir: Path, assume_yes: bool = False) -> bool:
 
 
 def install_claude(root_dir: Path, assume_yes: bool = False) -> bool:
-    """Install Claude Code commands, prepackaged skills, and update existing CLAUDE.md if present."""
+    """Install Claude Code commands, prepackaged skills, Git pre-commit hook, and update existing CLAUDE.md if present."""
+    install_git_hook(root_dir)
     ensure_tiered_rule_directories(root_dir)
 
     commands_dir = root_dir / ".claude" / "commands"
@@ -484,8 +486,8 @@ def main() -> None:
         install_claude(root_dir, assume_yes=args.yes)
         return
 
-    if args.git_hook:
-        install_git_hook(root_dir)
+    # Always ensure the Git pre-commit hook is installed when configuring any specific agent or hook
+    install_git_hook(root_dir)
     if args.antigravity:
         install_antigravity(root_dir)
     if args.agents:

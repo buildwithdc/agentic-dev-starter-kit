@@ -311,13 +311,13 @@ python3 scripts/package_tooling.py --extract /path/to/target --install # Extract
 ```
 
 ### `scripts/install_tooling.py`
-Dynamically registers or cleans assistant hooks and configurations.
+Dynamically registers or cleans assistant hooks and configurations (installing for any specific coding agent automatically includes the native Git `pre-commit` hook).
 ```bash
 python3 scripts/install_tooling.py --all          # Install Git pre-commit, Antigravity, AGENTS pointer, and Claude tooling
 python3 scripts/install_tooling.py --git-hook    # Install only the native Git pre-commit hook
-python3 scripts/install_tooling.py --antigravity # Install only Antigravity skills & hooks
-python3 scripts/install_tooling.py --agents      # Ensure AGENTS.md rules pointer
-python3 scripts/install_tooling.py --claude      # Install Claude Code commands (and memory pointer if CLAUDE.md exists)
+python3 scripts/install_tooling.py --antigravity # Install Antigravity skills/hooks + Git pre-commit hook
+python3 scripts/install_tooling.py --agents      # Ensure AGENTS.md rules pointer + Git pre-commit hook
+python3 scripts/install_tooling.py --claude      # Install Claude Code commands/skills + Git pre-commit hook
 python3 scripts/install_tooling.py -y            # Automatically accept insert-only pointer injection prompts
 python3 scripts/install_tooling.py --clean       # Remove all generated assistant artifacts
 ```

@@ -74,10 +74,13 @@ and dynamic installers for Antigravity, Claude Code, and Git hooks.
    unzip dev-env-tooling.zip -d /path/to/target-workspace
    ```
 
-2. Run the dynamic installer to wire up hooks and assistant configurations:
+2. Run the dynamic installer to wire up Git pre-commit hooks and assistant configurations:
    ```bash
    cd /path/to/target-workspace
    python3 scripts/install_tooling.py --all
+   # Or for a specific coding agent (automatically includes the Git pre-commit hook):
+   # python3 scripts/install_tooling.py --antigravity
+   # python3 scripts/install_tooling.py --claude
    ```
 
 3. (Optional) Configure Gemini API for LLM-powered reviews:
