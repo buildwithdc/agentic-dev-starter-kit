@@ -20,6 +20,8 @@ This repository provides:
 
 ## Architecture & Governance Workflow
 
+![Agentic Development Environment & Governance Architecture](assets/architecture_diagram.png)
+
 ### 1. Multi-Tier Governance Architecture
 
 Rules are partitioned into three distinct lifecycles to prevent cross-contamination, rule drift, and VCS merge conflicts:
@@ -181,6 +183,8 @@ Organizations maintain canonical Tier 1 rules in a dedicated central governance 
 ├── .github/
 │   └── workflows/
 │       └── ai_rules_audit.yml         # Authoritative CI server-side compliance gate
+├── assets/
+│   └── architecture_diagram.png       # High-definition system architecture & governance diagram
 ├── dist/
 │   └── dev-env-tooling.zip            # Standalone portable tooling distribution bundle
 ├── scripts/
