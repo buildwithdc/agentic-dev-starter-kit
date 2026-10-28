@@ -18,11 +18,20 @@ if str(SCRIPT_DIR) not in sys.path:
 
 try:
     from scripts.constants import DEFAULT_AUDIT_LOG_PATH as CONST_AUDIT_LOG_PATH
-    from scripts.constants import RULES_DIR_NAME
+    from scripts.constants import (
+        DEFAULT_DEP_DEPTH,
+        DEFAULT_MAX_DEP_CHARS,
+        RULES_DIR_NAME,
+    )
 except ImportError:
     from constants import DEFAULT_AUDIT_LOG_PATH as CONST_AUDIT_LOG_PATH
-    from constants import RULES_DIR_NAME
+    from constants import (
+        DEFAULT_DEP_DEPTH,
+        DEFAULT_MAX_DEP_CHARS,
+        RULES_DIR_NAME,
+    )
 
+from dependency_scanner import DependencyContext, scan_dependencies
 from gemini_client import (
     GeminiClientConfig,
     GeminiReviewClient,
@@ -150,9 +159,30 @@ def format_violation(v: ReviewViolation) -> str:
     return "\n".join(out)
 
 
-def print_review_report(result: ReviewResult) -> None:
+def print_review_report(
+    result: ReviewResult,
+    dep_context: DependencyContext | None = None,
+) -> None:
     """Render structured diagnostic output."""
     print(f"\n{BOLD}{CYAN}=== Pre-Commit LLM Best-Practices Review ==={RESET}")
+
+    if dep_context is not None and dep_context.max_depth > 0:
+        dep_files = dep_context.touched_files()
+        if dep_context.snippets:
+            trunc_note = (
+                f" [truncated to budget: {dep_context.truncated_chars:,} chars removed]"
+                if dep_context.truncated
+                else ""
+            )
+            print(
+                f"{CYAN}🔗 Scanned {len(dep_context.snippets)} local dependency snippet(s) "
+                f"across {len(dep_files)} file(s) (depth={dep_context.max_depth}){trunc_note}{RESET}"
+            )
+        if dep_context.unstaged_neighbor_files:
+            print(
+                f"{YELLOW}⚠️  Note: Related neighbor file(s) have unstaged working-tree edits: "
+                f"{', '.join(dep_context.unstaged_neighbor_files)}{RESET}"
+            )
 
     if result.degraded:
         print(f"{YELLOW}[NOTICE: {result.summary}]{RESET}")
@@ -191,6 +221,9 @@ def run_review(
     skip_llm: bool = False,
     config: GeminiClientConfig | None = None,
     audit_file: Path | str = DEFAULT_AUDIT_LOG_PATH,
+    dep_depth: int | None = None,
+    max_dep_chars: int | None = None,
+    root_dir: Path | str = ".",
 ) -> int:
     """Execute pre-commit review workflow."""
     # 1. Check bypass flag
@@ -217,10 +250,19 @@ def run_review(
     # 4. Trigger background sync check for organizational rules (< 1ms check, non-blocking)
     try:
         rpath = Path(rules_dir).resolve()
-        root_cand = rpath.parent.parent if rpath.name == "rules" and rpath.parent.name == ".agents" else Path(".")
+        root_cand = rpath.parent.parent if rpath.name == "rules" and rpath.parent.name == ".agents" else Path(root_dir)
         trigger_background_sync(root_dir=root_cand)
     except Exception:
         pass
+
+    # 5. Scan local code dependencies (N degrees upstream & downstream)
+    dep_context = scan_dependencies(
+        staged_files=staged_files,
+        diff_text=diff_text,
+        root_dir=root_dir,
+        max_depth=dep_depth,
+        max_chars=max_dep_chars,
+    )
 
     # Load rules across 3-tier hierarchy (Org, Team, Personal)
     all_rules = load_rules(rules_dir)
@@ -229,7 +271,8 @@ def run_review(
         log_audit_entry("PASSED (NO_RULES)", audit_file=audit_file)
         return 0
 
-    matched_rules = match_rules_for_files(all_rules, staged_files)
+    candidate_files_for_rules = list(dict.fromkeys([*staged_files, *dep_context.touched_files()]))
+    matched_rules = match_rules_for_files(all_rules, candidate_files_for_rules)
     if not matched_rules:
         # No applicable rules for changed files
         log_audit_entry("PASSED (NO_MATCHED_RULES)", audit_file=audit_file)
@@ -240,16 +283,17 @@ def run_review(
         for r in matched_rules
     )
 
-    # 5. Call review client
+    # 6. Call review client
     client = GeminiReviewClient(config=config)
     result = client.review_diff(
         diff_text=diff_text,
         rules_text=rules_summary,
         staged_files=staged_files,
+        dependency_context=dep_context.format_for_prompt(),
     )
 
-    # 6. Print report
-    print_review_report(result)
+    # 7. Print report
+    print_review_report(result, dep_context=dep_context)
 
     if result.degraded:
         run_local_static_fallback()
@@ -312,6 +356,18 @@ def main() -> None:
         default=str(DEFAULT_AUDIT_LOG_PATH),
         help="Path to local audit log file (default: .agents/audit.log)",
     )
+    parser.add_argument(
+        "--dep-depth",
+        type=int,
+        default=None,
+        help=f"Degrees of local code dependency to scan (default: {DEFAULT_DEP_DEPTH}, 0 to disable)",
+    )
+    parser.add_argument(
+        "--max-dep-chars",
+        type=int,
+        default=None,
+        help=f"Maximum character budget for dependency snippets (default: {DEFAULT_MAX_DEP_CHARS})",
+    )
 
     args = parser.parse_args()
 
@@ -331,6 +387,8 @@ def main() -> None:
             skip_llm=args.skip_llm,
             config=cfg,
             audit_file=args.audit_file,
+            dep_depth=args.dep_depth,
+            max_dep_chars=args.max_dep_chars,
         )
     )
 

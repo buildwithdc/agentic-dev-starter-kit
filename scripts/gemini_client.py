@@ -307,8 +307,17 @@ class GeminiReviewClient:
         if not self.config.project_id:
             self.config.project_id = discover_gcp_project_id()
 
-    def _compute_cache_key(self, diff_text: str, rules_summary: str) -> str:
-        payload = f"{self.config.backend}:{self.config.model}:{self.config.project_id}\n{rules_summary}\n{diff_text}".encode()
+    def _compute_cache_key(
+        self,
+        diff_text: str,
+        rules_summary: str,
+        dependency_context: str = "",
+    ) -> str:
+        dep_part = f"\n{dependency_context}" if dependency_context else ""
+        payload = (
+            f"{self.config.backend}:{self.config.model}:{self.config.project_id}\n"
+            f"{rules_summary}\n{diff_text}{dep_part}"
+        ).encode()
         return hashlib.sha256(payload).hexdigest()
 
     def _get_cached_result(self, cache_key: str) -> ReviewResult | None:
@@ -495,6 +504,7 @@ class GeminiReviewClient:
         diff_text: str,
         rules_text: str,
         staged_files: Sequence[str] | None = None,
+        dependency_context: str = "",
     ) -> ReviewResult:
         """Evaluate staged diff against rules using Gemini Flash via ADC."""
         if not diff_text.strip():
@@ -504,7 +514,8 @@ class GeminiReviewClient:
                 violations=[],
             )
 
-        cache_key = self._compute_cache_key(diff_text, rules_text)
+        clean_dep_context = dependency_context.strip()
+        cache_key = self._compute_cache_key(diff_text, rules_text, clean_dep_context)
         cached = self._get_cached_result(cache_key)
         if cached is not None:
             return cached
@@ -518,23 +529,34 @@ class GeminiReviewClient:
                 degraded=True,
             )
 
+        dep_section = (
+            f"### LOCAL DEPENDENCY CONTEXT (UPSTREAM & DOWNSTREAM):\n{clean_dep_context}\n\n"
+            if clean_dep_context
+            else ""
+        )
+
         prompt = (
             "You are an automated pre-commit code review assistant. Evaluate the following "
             "staged git diff against the repository's canonical best-practice rules.\n\n"
             f"### CANONICAL RULES:\n{rules_text}\n\n"
             f"### STAGED FILES:\n{json.dumps(list(staged_files or []))}\n\n"
             f"### STAGED DIFF:\n{diff_text}\n\n"
+            f"{dep_section}"
             "Instructions:\n"
             "1. Check if any rule is violated in the diff.\n"
             "2. Assign severity 'CRITICAL' for hard security secrets / main branch bypass, "
-            "'ERROR' for broken typed interfaces or missing mock warnings, and 'WARN' for general advice.\n"
+            "'ERROR' for broken typed interfaces, broken downstream callers, cyclic dependencies, or missing mock warnings, and 'WARN' for general advice.\n"
             "3. If no violations exist, set passed=true and violations=[].\n"
             "4. Return strictly valid JSON adhering to the provided schema.\n"
             "5. HIERARCHICAL PRECEDENCE DIRECTIVE: Rules tagged [Tier: ORG] strictly supersede [Tier: TEAM], "
             "which strictly supersede [Tier: PERSONAL]. If a lower-tier rule attempts to permit, relax, "
             "carve out exceptions to, or contradict a constraint mandated by a higher-tier rule, you MUST "
             "disregard the lower-tier allowance and strictly enforce the higher-tier requirement. "
-            "Lower tiers can ONLY add stricter constraints, never weaken higher ones."
+            "Lower tiers can ONLY add stricter constraints, never weaken higher ones.\n"
+            "6. RELATIONAL DEPENDENCY EVALUATION DIRECTIVE: When LOCAL DEPENDENCY CONTEXT is provided, "
+            "use it strictly to detect cross-file impact caused by the staged diff (e.g., breaking a downstream "
+            "caller's signature/contract, violating an upstream typed interface, or introducing cyclic/layer "
+            "boundary violations). NEVER flag pre-existing, unrelated issues in untouched neighbor files."
         )
 
         url, headers, payload = self._prepare_request(prompt, token)
