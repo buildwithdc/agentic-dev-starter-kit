@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Unit tests for pre-commit reviewer and Gemini ADC client."""
 
+import io
 import json
 import os
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from scripts.dependency_scanner import DependencyContext, DependencySnippet
 from scripts.gemini_client import (
     DEFAULT_LOCATION,
     DEFAULT_MODEL,
@@ -23,6 +26,7 @@ from scripts.pre_commit_reviewer import (
     get_current_commit_hash,
     is_git_rebasing,
     log_audit_entry,
+    print_review_report,
     run_review,
 )
 from scripts.rule_loader import Rule
@@ -198,6 +202,10 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
         self.assertIsNotNone(cached)
         self.assertTrue(cached.passed)
         self.assertTrue(cached.cached)
+
+        # Verify dependency context alters cache key
+        key_with_deps = client._compute_cache_key("diff-123", "rules-123", "upstream snippet")
+        self.assertNotEqual(cache_key, key_with_deps)
 
     @patch("scripts.pre_commit_reviewer.is_git_rebasing", return_value=False)
     @patch("scripts.pre_commit_reviewer.GeminiReviewClient")
@@ -410,6 +418,31 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
         )
         self.assertFalse(res.has_collision)
         self.assertEqual(len(res.conflicts), 0)
+
+    def test_print_review_report_shows_truncated_chars(self) -> None:
+        dep_ctx = DependencyContext(
+            max_depth=2,
+            snippets=[
+                DependencySnippet(
+                    file="pkg/contracts.py",
+                    direction="upstream",
+                    degree=1,
+                    symbol="UserRecord",
+                    source_file="pkg/service.py",
+                    line_start=1,
+                    line_end=10,
+                    snippet="1: class UserRecord: pass",
+                )
+            ],
+            truncated=True,
+            truncated_chars=1250,
+        )
+        res = ReviewResult(passed=True, summary="All good", violations=[])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            print_review_report(res, dep_context=dep_ctx)
+        output = buf.getvalue()
+        self.assertIn("[truncated to budget: 1,250 chars removed]", output)
 
 
 if __name__ == "__main__":

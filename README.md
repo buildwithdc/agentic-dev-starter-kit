@@ -12,7 +12,7 @@ This repository provides:
 2. **24-Hour Non-Blocking Background Org Rule Sync** (`scripts/sync_org_rules.py`): Automatically checks and updates enterprise rules in a detached background worker without delaying developers' pre-commit workflows.
 3. **Dynamic Multi-Assistant Tooling & Skills** (`scripts/install_tooling.py`): Zero repository clutter; generates Git hooks, Antigravity skills/hooks, and Claude Code commands on demand.
 4. **VCS-Isolated Personal Preference Persistence** (`scripts/preference_manager.py` & `.agents/rules/personal/`): Captures developer habits into persistent rules without polluting git diffs or creating repository merge conflicts.
-5. **Universal Pre-Commit Review Engine** (`scripts/pre_commit_reviewer.py` & `scripts/gemini_client.py`): Gemini 3.8 Flash powered diff evaluation supporting Google Application Default Credentials (ADC) and Google AI Studio, with SHA-256 diff caching and a non-weakening multi-tier gating policy.
+5. **Universal Pre-Commit Review Engine & Multi-Language Dependency Scanner** (`scripts/pre_commit_reviewer.py`, `scripts/dependency_scanner.py`, & `scripts/gemini_client.py`): Gemini 3.8 Flash powered diff evaluation with bidirectional N-degree local dependency context scanning (upstream contracts & downstream callers across Python, Java, Go, TypeScript/JS, Rust, Kotlin, C#, and C/C++), Google Application Default Credentials (ADC) and Google AI Studio support, SHA-256 diff + dependency caching, and a non-weakening multi-tier gating policy.
 6. **Authoritative CI Gatekeeper** (`.github/workflows/ai_rules_audit.yml`): "Two-Grip" governance model providing local pre-commit assistance paired with mandatory remote CI compliance.
 7. **Portable Standalone Distribution** (`scripts/package_tooling.py`): One-command packaging and extraction into any target repository.
 
@@ -78,7 +78,8 @@ sequenceDiagram
         Note over Reviewer: Cache fresh, no background sync needed
     end
 
-    Reviewer->>Engine: Immediately review staged diff against cached rules (Org, Team, Personal)
+    Reviewer->>Reviewer: Scan N-degree upstream/downstream local dependencies (dependency_scanner.py)
+    Reviewer->>Engine: Immediately review staged diff + dependency context against cached rules (Org, Team, Personal)
     alt Critical / Error Violations Detected
         Engine-->>Hook: Exit Code 1 + Structured Diagnostic Report
         Hook-->>Git: Block commit
@@ -89,6 +90,21 @@ sequenceDiagram
         Git-->>DevOrAgent: ✅ Commit Created Successfully
     end
 ```
+
+### 3. Bidirectional N-Degree Local Dependency Context (`scripts/dependency_scanner.py`)
+
+Rather than evaluating staged diffs in isolation, `pre_commit_reviewer.py` automatically traverses **N degrees of local code dependencies** (default `1` degree) around modified diff hunks:
+
+- **Upstream Definitions & Contracts**: Resolves local modules, packages, classes, interfaces, structs, and functions imported and referenced by the modified code so the reviewer can detect contract mismatches or architectural layer violations.
+- **Downstream Callers & Importers**: Discovers production call sites across the repository that import or invoke symbols modified in the staged diff (automatically excluding unit/integration test files) so breaking signature or behavioral changes are caught before commit.
+- **Multi-Language Support (Zero External Dependencies)**:
+  - **Python** (`.py`): Full `ast` symbol definition, import alias, and enclosing call-site resolution.
+  - **Java & Kotlin** (`.java`, `.kt`, `.kts`): Cross-package `import` / `import static` / wildcard resolution plus automatic same-package sibling class resolution.
+  - **Go** (`.go`): Single-line and block `import (...)` package directory resolution plus same-package sibling `.go` file resolution.
+  - **TypeScript & JavaScript** (`.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`): Single- and multi-line `import`/`export`, `require()`, relative specifiers (`./`, `../`), and path aliases (`@/`, `~/`, `src/`).
+  - **Rust, C#, & C/C++** (`.rs`, `.cs`, `.c`, `.cpp`, `.cc`, `.h`, `.hpp`): `use crate::...`, `mod ...;`, and `#include "..."` header/implementation resolution.
+- **Git Index vs. `HEAD` Isolation**: Reads staged files from the Git index (`:path`) and untouched neighbor files from `HEAD` (`HEAD:path`), flagging any impacted neighbor file that has unstaged working-tree edits.
+- **Relational Impact Enforcement**: Neighbor snippets are used strictly to verify relational compatibility with the staged diff—pre-existing unrelated style issues in untouched neighbor files never block a commit.
 
 ---
 
@@ -189,6 +205,7 @@ Organizations maintain canonical Tier 1 rules in a dedicated central governance 
 │   └── dev-env-tooling.zip            # Standalone portable tooling distribution bundle
 ├── scripts/
 │   ├── constants.py                   # Centralized repository constants for rule paths & tiers
+│   ├── dependency_scanner.py          # Bidirectional N-degree multi-language dependency scanner
 │   ├── gemini_client.py               # Gemini 3.8 Flash review client (Vertex AI & Google AI Studio)
 │   ├── install_tooling.py             # Dynamic assistant tooling & hook generator
 │   ├── package_tooling.py             # Portable workspace bundler & extractor
@@ -290,11 +307,14 @@ python3 scripts/sync_org_rules.py --verbose           # Verbose mode: show origi
 ```
 
 ### `scripts/pre_commit_reviewer.py`
-Executes pre-commit review against staged changes across all tiers.
+Executes pre-commit review against staged changes and local N-degree dependencies across all rule tiers.
 ```bash
-python3 scripts/pre_commit_reviewer.py                       # Run review against staged changes
-python3 scripts/pre_commit_reviewer.py --skip-llm           # Bypass LLM evaluation
-python3 scripts/pre_commit_reviewer.py --backend google_ai  # Use Google AI Studio backend
+python3 scripts/pre_commit_reviewer.py                       # Run review against staged changes (default --dep-depth 1)
+python3 scripts/pre_commit_reviewer.py --dep-depth 2         # Traverse 2 degrees of upstream & downstream dependencies
+python3 scripts/pre_commit_reviewer.py --dep-depth 0         # Disable local dependency context scanning
+python3 scripts/pre_commit_reviewer.py --max-dep-chars 24000 # Set character budget for dependency snippets
+python3 scripts/pre_commit_reviewer.py --skip-llm            # Bypass LLM evaluation
+python3 scripts/pre_commit_reviewer.py --backend google_ai   # Use Google AI Studio backend
 python3 scripts/pre_commit_reviewer.py --model gemini-3.8-flash
 ```
 

@@ -5,8 +5,12 @@ import unittest
 from pathlib import Path
 
 from scripts.constants import (
+    DEFAULT_DEP_DEPTH,
+    DEFAULT_MAX_DEP_CHARS,
     DEFAULT_PERSONAL_PREFERENCES_PATH,
     DEFAULT_SYNC_TTL_SECONDS,
+    ENV_DEP_DEPTH,
+    ENV_MAX_DEP_CHARS,
     ORG_RULE_FILES,
     ORG_RULES_REL_PATH,
     PERSONAL_RULE_FILES,
@@ -82,6 +86,10 @@ class TestConstants(unittest.TestCase):
 
         self.assertEqual(DEFAULT_SYNC_TTL_SECONDS, 86400)
         self.assertEqual(SYNC_TIMESTAMP_FILENAME, ".sync_timestamp")
+        self.assertEqual(ENV_DEP_DEPTH, "GEMINI_DEP_DEPTH")
+        self.assertEqual(ENV_MAX_DEP_CHARS, "GEMINI_MAX_DEP_CHARS")
+        self.assertEqual(DEFAULT_DEP_DEPTH, 1)
+        self.assertEqual(DEFAULT_MAX_DEP_CHARS, 24000)
 
         # Test path resolver helper
         resolved = get_rule_path("org", RULE_ORG_META_GUIDELINES, root_dir=Path("/workspace"))

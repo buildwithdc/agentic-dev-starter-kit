@@ -187,6 +187,7 @@ GITIGNORE_END_TAG = "# END AGENTIC DEV TOOLING GITIGNORE"
 
 PORTED_TOOLING_SCRIPTS: tuple[str, ...] = (
     "scripts/constants.py",
+    "scripts/dependency_scanner.py",
     "scripts/gemini_client.py",
     "scripts/install_tooling.py",
     "scripts/package_tooling.py",

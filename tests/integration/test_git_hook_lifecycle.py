@@ -7,11 +7,12 @@ import unittest
 from pathlib import Path
 
 from scripts.install_tooling import install_git_hook
+from scripts.sync_org_rules import record_sync_timestamp
 
 
 class TestGitHookLifecycle(unittest.TestCase):
     def setUp(self) -> None:
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.repo_dir = Path(self.temp_dir.name)
 
         # Initialize git repo
@@ -42,10 +43,12 @@ class TestGitHookLifecycle(unittest.TestCase):
         rules_src = Path(__file__).resolve().parent.parent.parent / ".agents" / "rules"
         rules_dest = self.repo_dir / ".agents" / "rules"
         rules_dest.mkdir(parents=True, exist_ok=True)
-        for rule_file in rules_src.glob("*.md"):
-            rules_dest.joinpath(rule_file.name).write_text(
-                rule_file.read_text(encoding="utf-8"), encoding="utf-8"
-            )
+        for rule_file in rules_src.rglob("*.md"):
+            rel_path = rule_file.relative_to(rules_src)
+            dest_file = rules_dest / rel_path
+            dest_file.parent.mkdir(parents=True, exist_ok=True)
+            dest_file.write_text(rule_file.read_text(encoding="utf-8"), encoding="utf-8")
+        record_sync_timestamp(self.repo_dir)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()

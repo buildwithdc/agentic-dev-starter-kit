@@ -80,12 +80,17 @@ SEVERITY_PRIORITY: dict[str, int] = {
 }
 
 # ==============================================================================
-# Synchronization & Audit Defaults
+# Synchronization, Dependency Scanning & Audit Defaults
 # ==============================================================================
 SYNC_TIMESTAMP_FILENAME = ".sync_timestamp"
 DEFAULT_SYNC_TTL_SECONDS = 86400  # 24 hours
 DEFAULT_AUDIT_LOG_PATH = ".agents/audit.log"
 DEFAULT_CACHE_DIR_PATH = ".git/.llm_cache"
+
+ENV_DEP_DEPTH = "GEMINI_DEP_DEPTH"
+ENV_MAX_DEP_CHARS = "GEMINI_MAX_DEP_CHARS"
+DEFAULT_DEP_DEPTH = 1
+DEFAULT_MAX_DEP_CHARS = 24000
 
 
 def get_rule_path(tier: str, rule_filename: str, root_dir: Path | None = None) -> Path:
