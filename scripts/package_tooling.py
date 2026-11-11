@@ -305,7 +305,7 @@ def extract_tooling(
     return extracted_files
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point for packaging and extracting portable dev tooling."""
     parser = argparse.ArgumentParser(
         description="Portable Dev Environment Tooling Packager & Extractor",
@@ -377,7 +377,7 @@ def main() -> None:
         help="Suppress detailed packaging output",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Mode 1: List contents
     if args.list:
@@ -385,7 +385,7 @@ def main() -> None:
         print(f"📦 Contents of {args.list} ({len(contents)} files):")
         for name in contents:
             print(f"  - {name}")
-        return
+        return 0
 
     # Mode 2: Extract bundle
     if args.extract:
@@ -404,7 +404,7 @@ def main() -> None:
             print(f"✅ Extracted {len(extracted)} files to {dest}")
             if args.install:
                 print("✅ Assistant tooling and hooks automatically configured.")
-        return
+        return 0
 
     # Mode 3: Create package bundle
     root = Path(args.root_dir).resolve()
@@ -423,7 +423,8 @@ def main() -> None:
         print("\n💡 To install in another workspace:")
         print(f"   unzip {out_path.name} -d /path/to/target-workspace")
         print("   cd /path/to/target-workspace && python3 scripts/install_tooling.py --all")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

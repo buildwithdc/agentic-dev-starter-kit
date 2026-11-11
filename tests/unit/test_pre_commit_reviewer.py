@@ -444,6 +444,12 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
         output = buf.getvalue()
         self.assertIn("[truncated to budget: 1,250 chars removed]", output)
 
+    @patch.dict("os.environ", {"GEMINI_API_KEY": "your_gemini_api_key_here"}, clear=True)
+    def test_placeholder_api_key_is_ignored_and_defaults_to_vertex_adc(self) -> None:
+        cfg = GeminiClientConfig.from_env()
+        self.assertIsNone(cfg.api_key)
+        self.assertEqual(cfg.backend, "vertex")
+
 
 if __name__ == "__main__":
     unittest.main()

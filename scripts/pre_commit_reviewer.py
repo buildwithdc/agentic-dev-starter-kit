@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,7 +40,7 @@ from gemini_client import (
     ReviewViolation,
 )
 from rule_loader import load_rules, match_rules_for_files
-from sync_org_rules import trigger_background_sync
+from sync_org_rules import load_dotenv, trigger_background_sync
 
 # ANSI Terminal Colors
 BOLD = "\033[1m"
@@ -265,9 +266,14 @@ def run_review(
     )
 
     # Load rules across 3-tier hierarchy (Org, Team, Personal)
+    load_dotenv(root_dir)
     all_rules = load_rules(rules_dir)
     if not all_rules:
         # No rules configured
+        print(
+            f"{YELLOW}⚠️  No organizational or team rules found in {rules_dir}. "
+            f"Run 'agentic-dev sync' (with ORG_RULES_SYNC_URL in .env) or add team rules to {rules_dir}/team/.{RESET}"
+        )
         log_audit_entry("PASSED (NO_RULES)", audit_file=audit_file)
         return 0
 
@@ -318,7 +324,7 @@ def run_review(
     return 0
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Pre-commit LLM Best-Practices Reviewer")
     parser.add_argument(
         "--rules-dir",
@@ -368,8 +374,14 @@ def main() -> None:
         default=None,
         help=f"Maximum character budget for dependency snippets (default: {DEFAULT_MAX_DEP_CHARS})",
     )
+    parser.add_argument(
+        "--root-dir",
+        default=".",
+        help="Root repository directory (default: .)",
+    )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    load_dotenv(args.root_dir)
 
     cfg = GeminiClientConfig.from_env()
     if args.backend:
@@ -381,17 +393,16 @@ def main() -> None:
     if args.model:
         cfg.model = args.model
 
-    sys.exit(
-        run_review(
-            rules_dir=args.rules_dir,
-            skip_llm=args.skip_llm,
-            config=cfg,
-            audit_file=args.audit_file,
-            dep_depth=args.dep_depth,
-            max_dep_chars=args.max_dep_chars,
-        )
+    return run_review(
+        rules_dir=args.rules_dir,
+        skip_llm=args.skip_llm,
+        config=cfg,
+        audit_file=args.audit_file,
+        dep_depth=args.dep_depth,
+        max_dep_chars=args.max_dep_chars,
+        root_dir=args.root_dir,
     )
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

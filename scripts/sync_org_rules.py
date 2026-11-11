@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -176,19 +177,30 @@ def trigger_background_sync(
     if not is_sync_needed(root_dir):
         return False
 
-    script_path = (
-        Path(sync_script).resolve()
-        if sync_script
-        else Path(__file__).resolve()
-    )
+    resolved_root = str(Path(root_dir).resolve())
 
-    if not script_path.exists():
-        return False
+    if sync_script is not None:
+        script_path = Path(sync_script).resolve()
+        if not script_path.exists():
+            return False
+        cmd = [sys.executable, str(script_path), "--root-dir", resolved_root]
+    elif getattr(sys, "frozen", False):
+        cmd = [sys.executable, "sync", "--root-dir", resolved_root]
+    elif sys.argv and sys.argv[0] and Path(sys.argv[0]).suffix == ".pyz":
+        pyz_path = Path(sys.argv[0]).resolve()
+        if not pyz_path.exists():
+            return False
+        cmd = [sys.executable, str(pyz_path), "sync", "--root-dir", resolved_root]
+    else:
+        script_path = Path(__file__).resolve()
+        if not script_path.exists():
+            return False
+        cmd = [sys.executable, str(script_path), "--root-dir", resolved_root]
 
     try:
         # Spawn detached process: does NOT block the calling process or terminal session
         subprocess.Popen(
-            [sys.executable, str(script_path), "--root-dir", str(Path(root_dir).resolve())],
+            cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
@@ -483,7 +495,7 @@ def sync_org_rules(
     else:
         remote_origin = "None (not configured; using local cache)"
 
-    if not force and not is_sync_needed(root):
+    if not force and not is_sync_needed(root) and get_local_rules(root):
         if verbose:
             last_sync_info = get_last_sync_info(root)
             local_rules = get_local_rules(root)
@@ -614,7 +626,6 @@ def sync_org_rules(
     # 3. Default behavior when no remote URL configured (local cached validation)
     existing_rules = get_local_rules(root)
     if not existing_rules:
-        record_sync_timestamp(root, backoff=True)
         log_sync_event(
             root,
             "SYNC_CACHED_EMPTY",
@@ -651,7 +662,7 @@ def sync_org_rules(
     return True
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Synchronize organizational rules")
     parser.add_argument(
         "--root-dir",
@@ -690,7 +701,7 @@ def main() -> None:
         help="Show detailed sync information including remote origin, last sync timestamp, local rules, and changes from remote",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.check_only:
         needed = is_sync_needed(args.root_dir)
@@ -720,10 +731,10 @@ def main() -> None:
             )
         if needed:
             print("Sync needed: organizational rules are older than 24 hours.")
-            sys.exit(1)
+            return 1
         else:
             print("Sync not needed: organizational rules are up to date.")
-            sys.exit(0)
+            return 0
 
     if args.background:
         spawned = trigger_background_sync(args.root_dir)
@@ -731,7 +742,18 @@ def main() -> None:
             print("Background sync worker spawned successfully.")
         else:
             print("Sync not needed or already in progress.")
-        sys.exit(0)
+        return 0
+
+    resolved_root = Path(args.root_dir).resolve()
+    env_file = resolved_root / ".env"
+    load_dotenv(resolved_root)
+    raw_url = args.source_url or os.getenv("ORG_RULES_SYNC_URL")
+
+    if not env_file.is_file() and not raw_url and not args.source_dir:
+        print(
+            f"⚠️  No .env file found in {resolved_root}. "
+            "Copy .env.example to .env and set ORG_RULES_SYNC_URL to sync remote organizational rules."
+        )
 
     success = sync_org_rules(
         root_dir=args.root_dir,
@@ -740,13 +762,27 @@ def main() -> None:
         force=args.force,
         verbose=args.verbose,
     )
+    local_rules = get_local_rules(args.root_dir)
     if success:
-        print("✅ Organizational rules synchronized successfully.")
-        sys.exit(0)
+        if raw_url or args.source_dir:
+            print(f"✅ Organizational rules synchronized successfully ({len(local_rules)} rule(s) active).")
+        else:
+            print(
+                f"ℹ️  No remote ORG_RULES_SYNC_URL configured; using {len(local_rules)} cached organizational rule(s) in {DEFAULT_ORG_RULES_RELATIVE_PATH}."
+            )
+        return 0
     else:
-        print("⚠️ Organizational rules sync completed with offline/cached fallback.")
-        sys.exit(0)
+        if local_rules:
+            print(
+                f"⚠️  Organizational rules sync completed with offline/cached fallback ({len(local_rules)} cached rule(s) active)."
+            )
+            return 0
+        print(
+            f"❌ No organizational rules loaded (0 rules in {DEFAULT_ORG_RULES_RELATIVE_PATH}). "
+            "Configure ORG_RULES_SYNC_URL in .env or pass --source-url / --source-dir."
+        )
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

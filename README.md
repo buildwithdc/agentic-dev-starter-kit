@@ -14,7 +14,7 @@ This repository provides:
 4. **VCS-Isolated Personal Preference Persistence** (`scripts/preference_manager.py` & `.agents/rules/personal/`): Captures developer habits into persistent rules without polluting git diffs or creating repository merge conflicts.
 5. **Universal Pre-Commit Review Engine & Multi-Language Dependency Scanner** (`scripts/pre_commit_reviewer.py`, `scripts/dependency_scanner.py`, & `scripts/gemini_client.py`): Gemini 3.8 Flash powered diff evaluation with bidirectional N-degree local dependency context scanning (upstream contracts & downstream callers across Python, Java, Go, TypeScript/JS, Rust, Kotlin, C#, and C/C++), Google Application Default Credentials (ADC) and Google AI Studio support, SHA-256 diff + dependency caching, and a non-weakening multi-tier gating policy.
 6. **Authoritative CI Gatekeeper** (`.github/workflows/ai_rules_audit.yml`): "Two-Grip" governance model providing local pre-commit assistance paired with mandatory remote CI compliance.
-7. **Portable Standalone Distribution** (`scripts/package_tooling.py`): One-command packaging and extraction into any target repository.
+7. **Standalone Binary & Unified CLI (`agentic-dev`)** (`scripts/cli.py`, `scripts/build_binary.py`, & `scripts/package_tooling.py`): Zero-clutter native binary (`dist/agentic-dev`) and lightweight zipapp (`dist/agentic-dev.pyz`) with an interactive 3-step setup wizard, collision-safe `.env` management, and dynamic organizational rule synchronization.
 
 ---
 
@@ -202,12 +202,18 @@ Organizations maintain canonical Tier 1 rules in a dedicated central governance 
 ├── assets/
 │   └── architecture_diagram.png       # High-definition system architecture & governance diagram
 ├── dist/
-│   └── dev-env-tooling.zip            # Standalone portable tooling distribution bundle
+│   ├── agentic-dev                    # Standalone native CLI binary (PyInstaller --onefile)
+│   ├── agentic-dev.pyz                # Lightweight stdlib zipapp executable
+│   └── dev-env-tooling.zip            # Legacy portable script distribution bundle
 ├── scripts/
+│   ├── __init__.py                    # Package metadata & version
+│   ├── build_binary.py                # Reproducible builder for dist/agentic-dev and dist/agentic-dev.pyz
+│   ├── bundled_assets.py              # Workspace template bootstrapper & collision-safe .env merger
+│   ├── cli.py                         # Unified agentic-dev CLI dispatcher (init, review, sync, prefs, doctor)
 │   ├── constants.py                   # Centralized repository constants for rule paths & tiers
 │   ├── dependency_scanner.py          # Bidirectional N-degree multi-language dependency scanner
 │   ├── gemini_client.py               # Gemini 3.8 Flash review client (Vertex AI & Google AI Studio)
-│   ├── install_tooling.py             # Dynamic assistant tooling & hook generator
+│   ├── install_tooling.py             # Dynamic assistant tooling, hook generator, & interactive setup wizard
 │   ├── package_tooling.py             # Portable workspace bundler & extractor
 │   ├── pre_commit_reviewer.py         # Universal pre-commit review CLI & gating engine
 │   ├── preference_manager.py          # Preference inspector, updater, and rule formatter
@@ -256,13 +262,44 @@ Organizations maintain canonical Tier 1 rules in a dedicated central governance 
 
 ### 2. Distributing into Another Repository
 
-You can distribute and bootstrap this entire tooling environment into any target workspace:
+You can distribute and bootstrap this tooling environment into any target repository using either the **standalone `agentic-dev` binary** (zero `scripts/*.py` copied into the target repository) or the portable script bundle:
+
+#### Option A (Recommended): Standalone Binary (`agentic-dev`)
+
+1. **Build the Standalone Binary**:
+   ```bash
+   # Build both dist/agentic-dev (native binary) and dist/agentic-dev.pyz (zipapp)
+   .venv/bin/python scripts/build_binary.py
+
+   # Optional: also install to ~/.local/bin/agentic-dev
+   .venv/bin/python scripts/build_binary.py --install-local
+   ```
+
+2. **Initialize Any Target Repository (Interactive 3-Step Wizard)**:
+   Place `agentic-dev` on your `PATH` (or directly in the target project root `./agentic-dev`) and run `init`:
+   ```bash
+   cd /path/to/target-workspace
+   ./agentic-dev init
+   ```
+   The interactive wizard guides you through:
+   - **Step 1**: Selecting your coding assistant(s) (Antigravity, Claude Code, `AGENTS.md` pointer, or Git hook only).
+   - **Step 2**: Creating or non-destructively merging `.env` & `.env.example` using `# BEGIN AGENTIC DEV ENV` ... `# END AGENTIC DEV ENV` blocks (preserving any existing variables in your `.env`) and configuring `ORG_RULES_SYNC_URL`.
+   - **Step 3**: Configuring `.gitignore` for generated assistant configs and local state (without adding `scripts/*.py` when running from the binary).
+
+3. **Verify Setup & Run Commands**:
+   ```bash
+   ./agentic-dev doctor
+   ./agentic-dev sync --force --verbose
+   ./agentic-dev review
+   ```
+
+#### Option B: Portable Script Zip Bundle (`package_tooling.py`)
 
 ```bash
-# Option A: Extract and auto-install using package_tooling.py
+# Extract and auto-install using package_tooling.py
 python3 scripts/package_tooling.py --extract /path/to/target-workspace --install
 
-# Option B: Use the pre-built portable zip
+# Or unzip the pre-built archive manually
 unzip dist/dev-env-tooling.zip -d /path/to/target-workspace
 cd /path/to/target-workspace
 python3 scripts/install_tooling.py --all
@@ -294,6 +331,29 @@ The review engine incorporates robust safeguards to prevent workflow friction:
 ---
 
 ## CLI Command Reference
+
+### `agentic-dev` (Unified CLI & Standalone Binary)
+Unified entrypoint dispatching to all local validation and governance tools:
+```bash
+agentic-dev init                            # Launch interactive 3-step setup wizard
+agentic-dev init --all -y --gitignore       # Non-interactive full setup
+agentic-dev init --clean                    # Remove generated hooks, skills, and managed .env/.gitignore blocks
+agentic-dev doctor                          # Verify Git hook, .env, active rule tiers, and ADC/API key auth
+agentic-dev review [--dep-depth 1]          # Run pre-commit review against staged changes
+agentic-dev sync [--force] [--verbose]      # Synchronize Tier 1 organizational rules from ORG_RULES_SYNC_URL
+agentic-dev prefs --list                    # Inspect or update personal preferences
+agentic-dev package                         # Build or extract legacy script zip bundle
+agentic-dev version                         # Print CLI version
+```
+
+### `scripts/build_binary.py`
+Builds the standalone native executable (`dist/agentic-dev`) and lightweight Python zipapp (`dist/agentic-dev.pyz`).
+```bash
+.venv/bin/python scripts/build_binary.py                  # Build both dist/agentic-dev and dist/agentic-dev.pyz
+.venv/bin/python scripts/build_binary.py --pyz-only       # Build only dist/agentic-dev.pyz (stdlib only, <1s)
+.venv/bin/python scripts/build_binary.py --native-only    # Build only dist/agentic-dev via PyInstaller
+.venv/bin/python scripts/build_binary.py --install-local  # Build and install to ~/.local/bin/agentic-dev
+```
 
 ### `scripts/sync_org_rules.py`
 Synchronizes central organizational rules into `.agents/rules/org/`.

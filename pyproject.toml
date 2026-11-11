@@ -9,8 +9,12 @@ dependencies = [
     "requests>=2.28.0",
 ]
 
+[project.scripts]
+agentic-dev = "scripts.cli:main"
+
 [dependency-groups]
 dev = [
+    "pyinstaller>=6.0.0",
     "pytest>=8.0.0",
     "ruff>=0.5.0",
 ]

@@ -114,6 +114,34 @@ class TestSyncOrgRules(unittest.TestCase):
         self.assertFalse(res_fresh)
         mock_popen.assert_not_called()
 
+    @patch("subprocess.Popen")
+    def test_trigger_background_sync_frozen_and_pyz_modes(self, mock_popen) -> None:
+        # 1. Frozen PyInstaller binary mode (sys.frozen = True)
+        with (
+            patch("sys.frozen", True, create=True),
+            patch("sys.executable", "/usr/local/bin/agentic-dev"),
+        ):
+            res = trigger_background_sync(self.root_dir)
+            self.assertTrue(res)
+            called_cmd = mock_popen.call_args[0][0]
+            self.assertEqual(
+                called_cmd,
+                ["/usr/local/bin/agentic-dev", "sync", "--root-dir", str(self.root_dir.resolve())],
+            )
+
+        # 2. Zipapp (.pyz) mode
+        mock_popen.reset_mock()
+        fake_pyz = self.root_dir / "agentic-dev.pyz"
+        fake_pyz.write_bytes(b"pyz")
+        with patch("sys.argv", [str(fake_pyz)]):
+            res_pyz = trigger_background_sync(self.root_dir)
+            self.assertTrue(res_pyz)
+            called_pyz_cmd = mock_popen.call_args[0][0]
+            self.assertEqual(
+                called_pyz_cmd[1:],
+                [str(fake_pyz.resolve()), "sync", "--root-dir", str(self.root_dir.resolve())],
+            )
+
     def test_normalize_sync_url(self) -> None:
         tag_url = "https://github.com/myorg/rules-repo/releases/tag/v1.2.0"
         normalized = normalize_sync_url(tag_url)
