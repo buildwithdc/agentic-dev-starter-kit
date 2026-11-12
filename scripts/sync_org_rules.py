@@ -100,7 +100,7 @@ def _parse_timestamp_age(
     fallback_mtime: float,
 ) -> tuple[str | None, str | None, float]:
     """Parse ISO timestamp, status, and compute age from content, falling back to mtime."""
-    parts = [p.strip() for p in content.split("|", 1)]
+    parts = [p.strip() for p in content.split("|")]
     iso_ts = parts[0] if parts and parts[0] else None
     status = parts[1] if len(parts) > 1 and parts[1] else None
 
@@ -117,19 +117,60 @@ def _parse_timestamp_age(
     return iso_ts, status, max(0.0, time.time() - fallback_mtime)
 
 
+def _parse_synced_manifest(content: str) -> tuple[bool, list[str]]:
+    """Parse synced rule filename manifest from .sync_timestamp content if present.
+
+    Returns:
+        (has_manifest_field, list_of_expected_rule_filenames)
+    """
+    parts = [p.strip() for p in content.split("|")]
+    if len(parts) < 3:
+        return False, []
+    manifest_raw = parts[2]
+    if not manifest_raw:
+        return True, []
+    return True, [f.strip() for f in manifest_raw.split(",") if f.strip()]
+
+
 def is_sync_needed(
     root_dir: Path | str = ".",
     interval_seconds: int = DEFAULT_SYNC_INTERVAL_SECONDS,
+    has_remote_source: bool = False,
 ) -> bool:
-    """Check if the local organizational rules cache is older than the sync interval."""
-    ts_file = get_timestamp_file(root_dir)
+    """Check if the local organizational rules cache is stale or missing synced rules."""
+    root = Path(root_dir).resolve()
+    ts_file = get_timestamp_file(root)
     if not ts_file.exists():
         return True
 
     try:
         content = ts_file.read_text(encoding="utf-8").strip()
-        _, _, age = _parse_timestamp_age(content, ts_file.stat().st_mtime)
-        return age >= interval_seconds
+        _, status, age = _parse_timestamp_age(content, ts_file.stat().st_mtime)
+        if status == "BACKOFF" and age >= DEFAULT_RETRY_INTERVAL_SECONDS:
+            return True
+        if age >= interval_seconds:
+            return True
+
+        has_manifest, expected_files = _parse_synced_manifest(content)
+        local_rule_names = {f.name for f in get_local_rules(root)}
+        load_dotenv(root)
+        remote_configured = has_remote_source or bool(
+            os.getenv("ORG_RULES_SYNC_URL", "").strip()
+        )
+
+        if not local_rule_names and remote_configured:
+            return True
+
+        if has_manifest:
+            # If any previously synced rule file was removed locally, re-sync immediately
+            if any(fname not in local_rule_names for fname in expected_files):
+                return True
+        elif remote_configured:
+            # Legacy 2-field timestamp or local-only cache validation:
+            # if a remote source is configured, sync to reconcile full rule set & write manifest
+            return True
+
+        return False
     except Exception:
         return True
 
@@ -137,14 +178,19 @@ def is_sync_needed(
 def record_sync_timestamp(
     root_dir: Path | str = ".",
     backoff: bool = False,
+    synced_files: Sequence[str] | None = None,
 ) -> None:
-    """Update the sync timestamp file."""
+    """Update the sync timestamp file (including synced rule manifest when provided)."""
     ts_file = get_timestamp_file(root_dir)
     try:
         ts_file.parent.mkdir(parents=True, exist_ok=True)
         now = datetime.now(timezone.utc).isoformat()
         status = "BACKOFF" if backoff else "SUCCESS"
-        ts_file.write_text(f"{now} | {status}\n", encoding="utf-8")
+        if synced_files is not None:
+            manifest = ",".join(sorted(dict.fromkeys(synced_files)))
+            ts_file.write_text(f"{now} | {status} | {manifest}\n", encoding="utf-8")
+        else:
+            ts_file.write_text(f"{now} | {status}\n", encoding="utf-8")
     except Exception:
         pass
 
@@ -495,7 +541,11 @@ def sync_org_rules(
     else:
         remote_origin = "None (not configured; using local cache)"
 
-    if not force and not is_sync_needed(root) and get_local_rules(root):
+    if (
+        not force
+        and not is_sync_needed(root, has_remote_source=bool(source_dir or raw_url))
+        and get_local_rules(root)
+    ):
         if verbose:
             last_sync_info = get_last_sync_info(root)
             local_rules = get_local_rules(root)
@@ -524,7 +574,11 @@ def sync_org_rules(
                 changes = compare_rule_files(candidate_files, org_rules_dir)
                 for f in candidate_files:
                     shutil.copy2(f, org_rules_dir / f.name)
-                record_sync_timestamp(root, backoff=False)
+                record_sync_timestamp(
+                    root,
+                    backoff=False,
+                    synced_files=[f.name for f in candidate_files],
+                )
                 log_sync_event(
                     root,
                     "SYNC_LOCAL_SUCCESS",
@@ -588,7 +642,11 @@ def sync_org_rules(
                     )
                 return False
 
-            record_sync_timestamp(root, backoff=False)
+            record_sync_timestamp(
+                root,
+                backoff=False,
+                synced_files=[f.name for f in candidate_files],
+            )
             log_sync_event(
                 root,
                 "SYNC_REMOTE_SUCCESS",
@@ -704,10 +762,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.check_only:
-        needed = is_sync_needed(args.root_dir)
+        load_dotenv(args.root_dir)
+        raw_url = args.source_url or os.getenv("ORG_RULES_SYNC_URL")
+        needed = is_sync_needed(
+            args.root_dir,
+            has_remote_source=bool(args.source_dir or raw_url),
+        )
         if args.verbose:
-            load_dotenv(args.root_dir)
-            raw_url = args.source_url or os.getenv("ORG_RULES_SYNC_URL")
             if args.source_dir:
                 origin = f"{Path(args.source_dir).resolve()} (local directory)"
             elif raw_url:

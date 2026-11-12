@@ -950,7 +950,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     raw_sync_url = os.getenv("ORG_RULES_SYNC_URL", "").strip()
     if raw_sync_url:
         try:
-            synced = sync_org_rules(root_dir=root_dir, force=False)
+            synced = sync_org_rules(root_dir=root_dir, force=True)
             if synced:
                 active_count = len(get_local_rules(root_dir))
                 print(f"✅ Synchronized {active_count} organizational rule(s) from ORG_RULES_SYNC_URL.")

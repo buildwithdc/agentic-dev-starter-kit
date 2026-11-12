@@ -313,6 +313,55 @@ class TestSyncOrgRules(unittest.TestCase):
         self.assertIn("Local Rules (0): None found", printed_content)
         self.assertIn("No remote URL configured", printed_content)
 
+    def test_sync_org_rules_redownloads_when_partially_missing_local_rules(self) -> None:
+        """Verify that if one of the synced org rules is deleted locally, sync (even without --force) downloads the missing rule."""
+        source_dir = self.root_dir / "central_rules"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        (source_dir / "org-01-meta-guidelines.md").write_text("# Rule 1\n", encoding="utf-8")
+        (source_dir / "org-02-security-and-secrets.md").write_text("# Rule 2\n", encoding="utf-8")
+
+        # Initial sync (2 rules synced, timestamp + manifest recorded)
+        self.assertTrue(
+            sync_org_rules(root_dir=self.root_dir, source_dir=source_dir, force=False)
+        )
+        self.assertFalse(
+            is_sync_needed(self.root_dir, has_remote_source=True)
+        )
+
+        # Delete one rule locally so the directory is partially missing org rules
+        missing_rule = self.org_dir / "org-02-security-and-secrets.md"
+        missing_rule.unlink()
+        self.assertFalse(missing_rule.exists())
+        self.assertEqual(len(get_local_rules(self.root_dir)), 1)
+
+        # Even though timestamp is <24h old, is_sync_needed must detect the missing rule
+        self.assertTrue(is_sync_needed(self.root_dir, has_remote_source=True))
+
+        # Running sync_org_rules without --force must download the missing rule
+        self.assertTrue(
+            sync_org_rules(root_dir=self.root_dir, source_dir=source_dir, force=False)
+        )
+        self.assertTrue(missing_rule.is_file())
+        self.assertEqual(len(get_local_rules(self.root_dir)), 2)
+
+    def test_sync_org_rules_reconciles_partial_local_rules_with_legacy_timestamp(self) -> None:
+        """Verify that a workspace with 1 pre-existing rule and a 2-field timestamp downloads the other rule from remote without --force."""
+        source_dir = self.root_dir / "central_rules"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        (source_dir / "org-01-meta-guidelines.md").write_text("# Rule 1\n", encoding="utf-8")
+        (source_dir / "org-02-security-and-secrets.md").write_text("# Rule 2\n", encoding="utf-8")
+
+        # Workspace initially has only 1 rule and a 2-field timestamp (no manifest)
+        (self.org_dir / "org-01-meta-guidelines.md").write_text("# Rule 1\n", encoding="utf-8")
+        record_sync_timestamp(self.root_dir, backoff=False)
+
+        # Sync without --force must still fetch from source_dir and download org-02
+        self.assertTrue(
+            sync_org_rules(root_dir=self.root_dir, source_dir=source_dir, force=False)
+        )
+        self.assertTrue((self.org_dir / "org-02-security-and-secrets.md").is_file())
+        self.assertEqual(len(get_local_rules(self.root_dir)), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
