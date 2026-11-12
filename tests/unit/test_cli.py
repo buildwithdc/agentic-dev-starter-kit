@@ -10,6 +10,13 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from scripts.build_binary import (
+    BINARY_FILENAME,
+    ZIPAPP_FILENAME,
+)
+from scripts.build_binary import (
+    main as build_binary_main,
+)
 from scripts.cli import main as cli_main
 
 
@@ -194,6 +201,76 @@ class TestUnifiedCLI(unittest.TestCase):
         ]
         self.assertIn(".agents/hooks.json", gi_entries)
         self.assertFalse(any(line.startswith("scripts/") for line in gi_entries))
+
+    def test_build_binary_pyz_only_builds_only_zipapp(self) -> None:
+        project_root = Path(__file__).resolve().parent.parent.parent
+        out_dir = self.root_dir / "dist_pyz"
+        install_dir = self.root_dir / "local_bin"
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = build_binary_main(
+                [
+                    "--root-dir",
+                    str(project_root),
+                    "--output-dir",
+                    str(out_dir),
+                    "--pyz-only",
+                    "--install-local",
+                    "--install-dir",
+                    str(install_dir),
+                ]
+            )
+        self.assertEqual(rc, 0)
+        self.assertTrue((out_dir / ZIPAPP_FILENAME).is_file())
+        self.assertFalse((out_dir / BINARY_FILENAME).exists())
+        self.assertTrue((install_dir / BINARY_FILENAME).is_file())
+
+    def test_build_binary_native_only_success_and_missing_pyinstaller(self) -> None:
+        project_root = Path(__file__).resolve().parent.parent.parent
+        out_dir = self.root_dir / "dist_native"
+
+        # 1. When PyInstaller is unavailable, --native-only returns 1 and does not build .pyz
+        err_buf = io.StringIO()
+        with (
+            patch("scripts.build_binary.build_native_binary", return_value=None),
+            redirect_stderr(err_buf),
+        ):
+            rc_fail = build_binary_main(
+                [
+                    "--root-dir",
+                    str(project_root),
+                    "--output-dir",
+                    str(out_dir),
+                    "--native-only",
+                ]
+            )
+        self.assertEqual(rc_fail, 1)
+        self.assertIn("cannot build --native-only binary", err_buf.getvalue())
+        self.assertFalse((out_dir / ZIPAPP_FILENAME).exists())
+
+        # 2. When PyInstaller succeeds, --native-only builds only native binary and skips .pyz
+        out_dir.mkdir(parents=True, exist_ok=True)
+        fake_native = out_dir / BINARY_FILENAME
+        fake_native.write_bytes(b"#!/bin/sh\necho native\n")
+
+        out_buf = io.StringIO()
+        with (
+            patch("scripts.build_binary.build_native_binary", return_value=fake_native),
+            redirect_stdout(out_buf),
+        ):
+            rc_ok = build_binary_main(
+                [
+                    "--root-dir",
+                    str(project_root),
+                    "--output-dir",
+                    str(out_dir),
+                    "--native-only",
+                ]
+            )
+        self.assertEqual(rc_ok, 0)
+        self.assertTrue((out_dir / BINARY_FILENAME).is_file())
+        self.assertFalse((out_dir / ZIPAPP_FILENAME).exists())
 
 
 if __name__ == "__main__":

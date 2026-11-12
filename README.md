@@ -22,17 +22,26 @@ This repository provides:
 
 ![Agentic Development Environment & Governance Architecture](assets/architecture_diagram.png)
 
-### 1. Multi-Tier Governance Architecture
+### 1. Multi-Tier Governance & CLI Flow Architecture
 
-Rules are partitioned into three distinct lifecycles to prevent cross-contamination, rule drift, and VCS merge conflicts:
+Rules are partitioned into three distinct lifecycles and orchestrated through the unified `agentic-dev` CLI (`scripts/cli.py`) to prevent cross-contamination, rule drift, and VCS merge conflicts:
 
 ```mermaid
 flowchart TD
+    subgraph CLI ["Standalone CLI & Setup Wizard (agentic-dev / cli.py)"]
+        C1["agentic-dev init: 3-Step Setup Wizard (install_tooling.py)"]
+        C2["Template & Collision-Safe .env Merger (bundled_assets.py)"]
+        C3["agentic-dev doctor: Hook, Rule & Auth Diagnostics"]
+        C4["Git Hook (.git/hooks/pre-commit) & Assistant Skills (.agents/ & .claude/)"]
+        C1 --> C2
+        C1 --> C4
+    end
+
     subgraph Tier1 ["Tier 1: Organization Rules (org/)"]
         O1["Security Policy (org-02-security-and-secrets.md)"]
         O2["Branch Protection (org-01-meta-guidelines.md)"]
         O3["Managed by: AI CoE / InfoSec / Platform Team"]
-        O4["Sync: 24h Background Worker or Authoritative CI"]
+        O4["agentic-dev sync (sync_org_rules.py): 24h Background Worker / ORG_RULES_SYNC_URL"]
     end
 
     subgraph Tier2 ["Tier 2: Team / Service Rules (team/)"]
@@ -44,13 +53,26 @@ flowchart TD
 
     subgraph Tier3 ["Tier 3: Personal Preferences (personal/)"]
         P1["Developer Habits (personal-01-preferences.md)"]
-        P2["Managed by: Individual Developer"]
+        P2["agentic-dev prefs (preference_manager.py): Semantic Collision Check"]
         P3["VCS Status: Untracked (.gitignore) or Global Config"]
     end
 
-    Tier1 -->|Strict Precedence: Cannot be overridden| Engine[Review Engine: pre_commit_reviewer.py]
-    Tier2 -->|Contextual Architecture Rules| Engine
-    Tier3 -->|Ergonomics: Cannot weaken higher tiers| Engine
+    subgraph Engine ["Universal Review Engine (agentic-dev review / pre_commit_reviewer.py)"]
+        E1["Rule Loader (rule_loader.py): Non-Weakening Precedence (Org > Team > Personal)"]
+        E2["Dependency Scanner (dependency_scanner.py): Bidirectional N-Degree AST & Call Sites"]
+        E3["Gemini Client (gemini_client.py): Gemini 3.8 Flash + SHA-256 Cache + Two-Tier Gate"]
+        E1 --> E3
+        E2 --> E3
+    end
+
+    C2 -.->|Configures ORG_RULES_SYNC_URL| O4
+    C4 -->|Triggers on git commit| Engine
+    Tier1 -->|Strict Precedence: Cannot be overridden| E1
+    Tier2 -->|Contextual Architecture Rules| E1
+    Tier3 -->|Ergonomics: Cannot weaken higher tiers| E1
+    E3 -->|Pass: WARN / INFO| OpenPR["Commit, push and open PR"]
+    OpenPR --> CI["Authoritative CI Audit (ai_rules_audit.yml)"]
+    E3 -->|Block: CRITICAL / ERROR — Rework| CLI
 ```
 
 ### 2. The 24-Hour Non-Blocking Org Rule Sync & Review Cycle
@@ -59,33 +81,45 @@ flowchart TD
 sequenceDiagram
     autonumber
     actor DevOrAgent as Assistant / Developer
+    participant CLI as agentic-dev init (Setup Wizard)
     participant Git as Git CLI
     participant Hook as .git/hooks/pre-commit
-    participant Reviewer as pre_commit_reviewer.py
-    participant Worker as sync_org_rules.py (Detached)
-    participant Engine as Gemini 3.8 Flash Engine
-    participant Central as Central Rules Endpoint / Org Repo
+    participant Reviewer as agentic-dev review (pre_commit_reviewer.py)
+    participant Worker as agentic-dev sync (sync_org_rules.py)
+    participant Scanner as dependency_scanner.py & rule_loader.py
+    participant Engine as Gemini 3.8 Flash (gemini_client.py)
+    participant Central as Central Rules Repo (ORG_RULES_SYNC_URL)
+
+    opt One-Time Workspace Initialization
+        DevOrAgent->>CLI: ./agentic-dev init (3-Step Wizard)
+        CLI->>CLI: Merge .env / .env.example & .gitignore (bundled_assets.py)
+        CLI->>Hook: Install .git/hooks/pre-commit & assistant skills (.agents/, .claude/)
+        CLI->>Central: Initial sync of Tier 1 Org rules into .agents/rules/org/
+    end
 
     DevOrAgent->>Git: git commit -m "feat(auth): add login handler"
     Git->>Hook: Execute pre-commit hook
-    Hook->>Reviewer: Run review check
+    Hook->>Reviewer: Run `agentic-dev review`
     Reviewer->>Reviewer: Check .agents/rules/org/.sync_timestamp
 
     alt Timestamp > 24 Hours (or Missing)
         Reviewer-->>Worker: Spawn detached background process (0ms delay)
-        Note over Worker: Runs asynchronously in background:<br/>Fetches latest org rules from Central<br/>Validates & atomically writes cache<br/>Updates .sync_timestamp
+        Note over Worker,Central: Runs asynchronously in background:<br/>Fetches latest org rules from ORG_RULES_SYNC_URL<br/>Validates & atomically writes cache<br/>Updates .sync_timestamp
     else Timestamp < 24 Hours
         Note over Reviewer: Cache fresh, no background sync needed
     end
 
-    Reviewer->>Reviewer: Scan N-degree upstream/downstream local dependencies (dependency_scanner.py)
-    Reviewer->>Engine: Immediately review staged diff + dependency context against cached rules (Org, Team, Personal)
+    Reviewer->>Scanner: Load 3-tier rules & scan N-degree upstream/downstream dependencies
+    Scanner-->>Reviewer: Matched rules (Org > Team > Personal) + neighbor AST/call-site snippets
+    Reviewer->>Engine: Evaluate staged diff + dependency context (or hit SHA-256 cache)
     alt Critical / Error Violations Detected
-        Engine-->>Hook: Exit Code 1 + Structured Diagnostic Report
+        Engine-->>Reviewer: Structured Violations + Remediation Diff
+        Reviewer-->>Hook: Exit Code 1 + Diagnostic Report
         Hook-->>Git: Block commit
         Git-->>DevOrAgent: ❌ Commit Blocked with remediation instructions
     else Clean Diff or Advisory
-        Engine-->>Hook: Exit Code 0 (WARN advisories printed)
+        Engine-->>Reviewer: Passed (with optional WARN / INFO advisories)
+        Reviewer-->>Hook: Exit Code 0
         Hook-->>Git: Commit allowed
         Git-->>DevOrAgent: ✅ Commit Created Successfully
     end

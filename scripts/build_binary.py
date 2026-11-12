@@ -215,10 +215,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=DEFAULT_DIST_DIR,
         help=f"Output directory for built artifacts (default: {DEFAULT_DIST_DIR})",
     )
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--zipapp-only",
+        "--pyz-only",
+        dest="zipapp_only",
         action="store_true",
         help="Build only `dist/agentic-dev.pyz` (skip PyInstaller native binary)",
+    )
+    mode_group.add_argument(
+        "--native-only",
+        action="store_true",
+        help="Build only `dist/agentic-dev` via PyInstaller (skip .pyz zipapp)",
     )
     parser.add_argument(
         "--install-local",
@@ -237,12 +245,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not out_dir.is_absolute():
         out_dir = (root / out_dir).resolve()
 
-    # 1. Always build stdlib zipapp (`dist/agentic-dev.pyz`)
-    pyz_path = build_zipapp(root_dir=root, output_path=out_dir / ZIPAPP_FILENAME)
-    pyz_kb = pyz_path.stat().st_size / 1024
-    print(f"✅ Built portable zipapp -> {pyz_path} ({pyz_kb:.1f} KB)")
+    primary_artifact: Path | None = None
 
-    primary_artifact = pyz_path
+    # 1. Build stdlib zipapp (`dist/agentic-dev.pyz`) unless --native-only
+    if not args.native_only:
+        pyz_path = build_zipapp(root_dir=root, output_path=out_dir / ZIPAPP_FILENAME)
+        pyz_kb = pyz_path.stat().st_size / 1024
+        print(f"✅ Built portable zipapp -> {pyz_path} ({pyz_kb:.1f} KB)")
+        primary_artifact = pyz_path
 
     # 2. Build standalone native binary via PyInstaller unless --zipapp-only
     if not args.zipapp_only:
@@ -251,23 +261,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             native_mb = native_path.stat().st_size / (1024 * 1024)
             print(f"✅ Built standalone native binary -> {native_path} ({native_mb:.1f} MB)")
             primary_artifact = native_path
-        else:
+        elif primary_artifact is not None:
             # Copy .pyz to dist/agentic-dev as executable fallback when PyInstaller is unavailable
             fallback_bin = out_dir / BINARY_FILENAME
-            shutil.copy2(pyz_path, fallback_bin)
+            shutil.copy2(primary_artifact, fallback_bin)
             _set_executable(fallback_bin)
             print(
                 f"ℹ️  PyInstaller not found; copied executable zipapp to {fallback_bin}"
             )
             primary_artifact = fallback_bin
-    else:
-        fallback_bin = out_dir / BINARY_FILENAME
-        if not fallback_bin.exists():
-            shutil.copy2(pyz_path, fallback_bin)
-            _set_executable(fallback_bin)
-            primary_artifact = fallback_bin
+        else:
+            print("❌ PyInstaller not found; cannot build --native-only binary.", file=sys.stderr)
+            return 1
 
-    if args.install_local:
+    if args.install_local and primary_artifact is not None:
         installed = install_local_binary(primary_artifact, install_dir=args.install_dir)
         print(f"🚀 Installed `agentic-dev` locally -> {installed}")
 
