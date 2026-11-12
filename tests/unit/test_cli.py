@@ -13,6 +13,8 @@ from unittest.mock import patch
 from scripts.build_binary import (
     BINARY_FILENAME,
     ZIPAPP_FILENAME,
+    package_cached_onedir_binary,
+    set_executable,
 )
 from scripts.build_binary import (
     main as build_binary_main,
@@ -271,6 +273,38 @@ class TestUnifiedCLI(unittest.TestCase):
         self.assertEqual(rc_ok, 0)
         self.assertTrue((out_dir / BINARY_FILENAME).is_file())
         self.assertFalse((out_dir / ZIPAPP_FILENAME).exists())
+
+    def test_package_cached_onedir_binary_extracts_and_runs(self) -> None:
+        import os
+        import subprocess
+
+        if os.name == "nt":
+            return
+
+        bundle_dir = self.root_dir / "fake_bundle" / "agentic-dev"
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        inner_bin = bundle_dir / "agentic-dev"
+        inner_bin.write_text(
+            '#!/bin/sh\necho "invoked:$AGENTIC_DEV_INVOKING_BIN args:$*"\n',
+            encoding="utf-8",
+        )
+        set_executable(inner_bin)
+
+        out_bin = self.root_dir / "dist_cached" / BINARY_FILENAME
+        cache_dir = self.root_dir / "xdg_cache"
+        env = {**os.environ, "XDG_CACHE_HOME": str(cache_dir)}
+
+        package_cached_onedir_binary(bundle_dir, out_bin, prewarm_cache=False)
+        self.assertTrue(out_bin.is_file())
+
+        # Cold run extracts into XDG_CACHE_HOME and executes inner binary
+        res1 = subprocess.run([str(out_bin), "version"], env=env, capture_output=True, text=True, check=True)
+        self.assertIn(f"invoked:{out_bin} args:version", res1.stdout)
+        self.assertTrue((cache_dir / "agentic-dev").is_dir())
+
+        # Warm run reuses extracted cache directory directly
+        res2 = subprocess.run([str(out_bin), "doctor"], env=env, capture_output=True, text=True, check=True)
+        self.assertIn(f"invoked:{out_bin} args:doctor", res2.stdout)
 
 
 if __name__ == "__main__":

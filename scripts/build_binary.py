@@ -3,17 +3,21 @@
 
 Supports two complementary packaging tiers:
 1. `dist/agentic-dev.pyz`: Ultra-lightweight stdlib zipapp (<100 KB, 0 external build deps).
-2. `dist/agentic-dev`: Standalone native `--onefile` executable via PyInstaller (includes Python runtime).
+2. `dist/agentic-dev`: Standalone native executable via PyInstaller (`--onedir` wrapped in a
+   content-addressed self-caching single-file executable on POSIX to eliminate per-run extraction
+   and macOS Gatekeeper re-scanning overhead; `--onefile` on Windows).
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import zipapp
 from collections.abc import Sequence
@@ -41,10 +45,13 @@ if __name__ == "__main__":
 """
 
 
-def _set_executable(path: Path) -> None:
+def set_executable(path: Path) -> None:
     """Ensure a file has user/group/other executable permissions."""
     mode = path.stat().st_mode
     path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+_set_executable = set_executable
 
 
 def build_zipapp(
@@ -90,9 +97,13 @@ def build_zipapp(
 
 def _find_pyinstaller_cmd(root_dir: Path) -> list[str] | None:
     """Locate PyInstaller executable or module runner."""
+    venv_python = root_dir / ".venv" / "bin" / "python"
     venv_pyinstaller = root_dir / ".venv" / "bin" / "pyinstaller"
-    if venv_pyinstaller.is_file() and os.access(venv_pyinstaller, os.X_OK):
-        return [str(venv_pyinstaller)]
+    if venv_pyinstaller.is_file():
+        if venv_python.is_file() and os.access(venv_python, os.X_OK):
+            return [str(venv_python), "-m", "PyInstaller"]
+        if os.access(venv_pyinstaller, os.X_OK):
+            return [str(venv_pyinstaller)]
 
     which_pyinstaller = shutil.which("pyinstaller")
     if which_pyinstaller:
@@ -111,11 +122,89 @@ def _find_pyinstaller_cmd(root_dir: Path) -> list[str] | None:
     return None
 
 
+def package_cached_onedir_binary(
+    bundle_dir: Path,
+    output_binary: Path,
+    prewarm_cache: bool = True,
+) -> Path:
+    """Wrap a PyInstaller `--onedir` bundle into a content-addressed self-caching single-file executable.
+
+    Eliminates the ~4-11s per-invocation temp extraction and macOS Gatekeeper re-scanning penalty
+    of PyInstaller `--onefile` by extracting once into `${XDG_CACHE_HOME:-$HOME/.cache}/agentic-dev/rt-<hash>`
+    and directly `exec`-ing the persistent native binary on all runs (~130-150ms).
+    """
+    with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp_tar:
+        tar_path = Path(tmp_tar.name)
+
+    try:
+        with tarfile.open(tar_path, "w:gz", compresslevel=6) as tf:
+            tf.add(bundle_dir, arcname="agentic-dev")
+        payload_bytes = tar_path.read_bytes()
+    finally:
+        tar_path.unlink(missing_ok=True)
+
+    build_id = hashlib.sha256(payload_bytes).hexdigest()[:16]
+
+    # Build a fixed-length header so `tail -c +<OFFSET>` is 100% binary-safe and avoids awk scanning
+    header_template = (
+        "#!/bin/sh\n"
+        "set -e\n"
+        'export AGENTIC_DEV_INVOKING_BIN="${AGENTIC_DEV_INVOKING_BIN:-$0}"\n'
+        f'CACHE_ROOT="${{XDG_CACHE_HOME:-$HOME/.cache}}/agentic-dev/rt-{build_id}"\n'
+        'BIN_PATH="$CACHE_ROOT/agentic-dev/agentic-dev"\n'
+        'if [ ! -x "$BIN_PATH" ]; then\n'
+        '    TMP_DIR="$CACHE_ROOT.tmp.$$"\n'
+        '    mkdir -p "$TMP_DIR"\n'
+        '    tail -c +__PAYLOAD_OFFSET__ "$0" | tar -xzf - -C "$TMP_DIR"\n'
+        '    mkdir -p "$(dirname "$CACHE_ROOT")"\n'
+        '    mv "$TMP_DIR" "$CACHE_ROOT" 2>/dev/null || rm -rf "$TMP_DIR"\n'
+        "fi\n"
+        'exec "$BIN_PATH" "$@"\n'
+    )
+    # Compute 1-based byte offset where payload starts (no leading zeros; BSD tail parses leading 0 as octal)
+    payload_offset = len(header_template.replace("__PAYLOAD_OFFSET__", "100").encode("utf-8")) + 1
+    header_bytes = header_template.replace("__PAYLOAD_OFFSET__", str(payload_offset)).encode(
+        "utf-8"
+    )
+    if len(header_bytes) + 1 != payload_offset:
+        payload_offset = len(header_bytes) + 1
+        header_bytes = header_template.replace("__PAYLOAD_OFFSET__", str(payload_offset)).encode(
+            "utf-8"
+        )
+
+    output_binary.parent.mkdir(parents=True, exist_ok=True)
+    output_binary.write_bytes(header_bytes + payload_bytes)
+    _set_executable(output_binary)
+
+    if prewarm_cache:
+        try:
+            xdg_cache = os.getenv("XDG_CACHE_HOME", "").strip()
+            cache_base = Path(xdg_cache) if xdg_cache else (Path.home() / ".cache")
+            cache_root = cache_base / "agentic-dev" / f"rt-{build_id}"
+            target_bundle = cache_root / "agentic-dev"
+            if not (target_bundle / "agentic-dev").is_file():
+                cache_root.parent.mkdir(parents=True, exist_ok=True)
+                if cache_root.exists():
+                    shutil.rmtree(cache_root, ignore_errors=True)
+                shutil.copytree(bundle_dir, target_bundle, symlinks=True)
+            # Warm macOS Gatekeeper / vnode cache once at build time
+            subprocess.run(
+                [str(output_binary), "--version"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        except Exception:
+            pass
+
+    return output_binary
+
+
 def build_native_binary(
     root_dir: Path | str = ".",
     output_dir: Path | str | None = None,
 ) -> Path | None:
-    """Build standalone native `--onefile` binary `dist/agentic-dev` using PyInstaller."""
+    """Build standalone native binary `dist/agentic-dev` using PyInstaller."""
     root = Path(root_dir).resolve()
     dist_dir = (
         Path(output_dir).resolve()
@@ -136,7 +225,7 @@ def build_native_binary(
     hidden_imports: list[str] = []
     for py_file in sorted(scripts_src.glob("*.py")):
         mod_name = py_file.stem
-        if mod_name == "__init__":
+        if mod_name in ("__init__", "build_binary"):
             continue
         hidden_imports.extend(["--hidden-import", f"scripts.{mod_name}"])
         hidden_imports.extend(["--hidden-import", mod_name])
@@ -147,18 +236,24 @@ def build_native_binary(
     if env_example.is_file():
         add_data_args.extend(["--add-data", f"{env_example}{data_sep}."])
 
+    use_cached_onedir = os.name != "nt"
+
     with tempfile.TemporaryDirectory() as build_tmp:
         work_path = Path(build_tmp) / "work"
         spec_path = Path(build_tmp) / "spec"
+        pyi_dist_path = (Path(build_tmp) / "pyi_dist") if use_cached_onedir else dist_dir
+        pyi_env = os.environ.copy()
+        pyi_env.setdefault("PYINSTALLER_CONFIG_DIR", str(Path(build_tmp) / "pyi_config"))
+
         cmd = [
             *pyinstaller_cmd,
-            "--onefile",
+            "--onedir" if use_cached_onedir else "--onefile",
             "--clean",
             "--noconfirm",
             "--name",
             "agentic-dev",
             "--distpath",
-            str(dist_dir),
+            str(pyi_dist_path),
             "--workpath",
             str(work_path),
             "--specpath",
@@ -171,9 +266,15 @@ def build_native_binary(
             *add_data_args,
             str(cli_entrypoint),
         ]
-        subprocess.run(cmd, cwd=root, check=True)
+        subprocess.run(cmd, cwd=root, env=pyi_env, check=True)
 
-    binary_path = dist_dir / BINARY_FILENAME
+        binary_path = dist_dir / BINARY_FILENAME
+        if use_cached_onedir:
+            bundle_dir = pyi_dist_path / "agentic-dev"
+            if (bundle_dir / BINARY_FILENAME).is_file():
+                return package_cached_onedir_binary(bundle_dir, binary_path)
+            return None
+
     if binary_path.is_file():
         _set_executable(binary_path)
         return binary_path

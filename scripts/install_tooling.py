@@ -480,6 +480,11 @@ def update_gitignore(
 
 def _detect_invoking_binary_path() -> Path | None:
     """Return resolved path of the invoking standalone binary or .pyz zipapp if applicable."""
+    env_bin = os.getenv("AGENTIC_DEV_INVOKING_BIN")
+    if env_bin:
+        cand = Path(env_bin).resolve()
+        if cand.is_file():
+            return cand
     if getattr(sys, "frozen", False):
         cand = Path(sys.executable).resolve()
         if cand.is_file():
