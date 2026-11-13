@@ -31,6 +31,29 @@ DEFAULT_MODEL = "gemini-3.8-flash"
 DEFAULT_LOCATION = "global"
 DEFAULT_TIMEOUT = 30.0
 
+PLACEHOLDER_API_KEYS: frozenset[str] = frozenset(
+    {
+        "",
+        "your_gemini_api_key_here",
+        "your_api_key_here",
+        "your-gemini-api-key-here",
+        "your-api-key",
+        "changeme",
+        "none",
+        "null",
+    }
+)
+
+
+def sanitize_api_key(raw_key: str | None) -> str | None:
+    """Return a clean API key or None if unset or set to a template placeholder."""
+    if not raw_key:
+        return None
+    cleaned = raw_key.strip().strip('"').strip("'").strip()
+    if cleaned.lower() in PLACEHOLDER_API_KEYS:
+        return None
+    return cleaned
+
 VERTEX_ENDPOINT_TEMPLATE = (
     "https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/"
     "locations/{location}/publishers/google/models/{model}:generateContent"
@@ -157,10 +180,14 @@ class GeminiClientConfig:
     timeout: float = DEFAULT_TIMEOUT
     api_key: str | None = None
 
+    def __post_init__(self) -> None:
+        """Normalize placeholder API keys to None."""
+        self.api_key = sanitize_api_key(self.api_key)
+
     @classmethod
     def from_env(cls) -> GeminiClientConfig:
         """Create config populated from environment variables."""
-        api_key = os.getenv(ENV_API_KEY)
+        api_key = sanitize_api_key(os.getenv(ENV_API_KEY))
         explicit_backend = os.getenv(ENV_BACKEND)
         if explicit_backend:
             backend = explicit_backend.lower()
@@ -243,6 +270,9 @@ def get_adc_access_token(cache_dir: Path | None = None) -> str | None:
 
     # 1. Try google.auth SDK if available
     try:
+        if not os.getenv("GCE_METADATA_HOST") and not os.getenv("K_SERVICE"):
+            os.environ.setdefault("NO_GCE_CHECK", "true")
+
         import google.auth
         import google.auth.transport.requests
 

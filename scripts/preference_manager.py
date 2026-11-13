@@ -28,6 +28,7 @@ try:
         RuleCollisionResult,
     )
     from scripts.rule_loader import load_rules
+    from scripts.sync_org_rules import load_dotenv
 except ImportError:
     from constants import (
         DEFAULT_PERSONAL_PREFERENCES_PATH,
@@ -38,6 +39,7 @@ except ImportError:
         RuleCollisionResult,
     )
     from rule_loader import load_rules
+    from sync_org_rules import load_dotenv
 
 DEFAULT_RULE_RELATIVE_PATH = DEFAULT_PERSONAL_PREFERENCES_PATH
 
@@ -54,14 +56,23 @@ def check_rule_collision(
         return RuleCollisionResult(has_collision=False, summary="Empty rule text.")
 
     resolved_root = Path(root_dir).resolve()
+    load_dotenv(resolved_root)
     rpath = resolved_root / rules_dir if not Path(rules_dir).is_absolute() else Path(rules_dir)
     if not rpath.is_dir():
-        return RuleCollisionResult(has_collision=False, summary=f"Rules directory not found: {rpath}")
+        return RuleCollisionResult(
+            has_collision=False,
+            summary=f"Rules directory not found: {rpath}. Run 'agentic-dev init' and 'agentic-dev sync' first.",
+            degraded=True,
+        )
 
     # Load only Tier 1 (Org) and Tier 2 (Team) rules
     higher_rules = load_rules(rpath, include_personal=False, include_global=False)
     if not higher_rules:
-        return RuleCollisionResult(has_collision=False, summary="No higher-tier rules found to evaluate against.")
+        return RuleCollisionResult(
+            has_collision=False,
+            summary="No higher-tier rules (Org / Team) found in .agents/rules/ to evaluate against. Run 'agentic-dev sync' first.",
+            degraded=True,
+        )
 
     rules_summary = "\n\n".join(
         f"--- Rule: {r.id} ({r.title}) [Tier: {r.tier.upper()}] [Default Severity: {r.severity_default}] ---\n{r.content}"
@@ -406,6 +417,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
+    load_dotenv(args.root_dir)
 
     if args.check_collision:
         result = check_rule_collision(
