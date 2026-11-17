@@ -83,6 +83,7 @@ def check_rule_collision(
     return llm_client.check_rule_collision(
         proposed_rule=clean_rule,
         higher_tier_rules_text=rules_summary,
+        higher_rules=higher_rules,
     )
 
 DEFAULT_TEMPLATE = """---

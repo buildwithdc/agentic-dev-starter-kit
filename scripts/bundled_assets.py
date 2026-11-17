@@ -38,7 +38,9 @@ ENV_BLOCK_END_TAG = "# END AGENTIC DEV ENV"
 DEFAULT_ENV_EXAMPLE_CONTENT = """# Gemini API Configuration for LLM-powered pre-commit reviews & code auditor
 # GEMINI_API_KEY is optional: if unset, the reviewer automatically tries Google ADC (gcloud auth application-default login)
 # GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_DECISION_MODEL=gemini-decision-1
 GEMINI_MODEL=gemini-3.8-flash
+GEMINI_REVIEW_MODE=hybrid
 GOOGLE_CLOUD_LOCATION=global
 GEMINI_TIMEOUT=30.0
 GEMINI_DEP_DEPTH=1

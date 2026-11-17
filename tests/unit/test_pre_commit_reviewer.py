@@ -450,6 +450,274 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
         self.assertIsNone(cfg.api_key)
         self.assertEqual(cfg.backend, "vertex")
 
+    @patch("urllib.request.urlopen")
+    def test_hybrid_stage1_fast_pass_skips_stage2(self, mock_urlopen) -> None:
+        """When gemini-decision-1 finds zero violations, Stage 2 (gemini-3.8-flash) is never called."""
+        decision_resp = MagicMock()
+        decision_resp.read.return_value = json.dumps(
+            {
+                "answers": {
+                    "org-02-security-and-secrets": {
+                        "type": "score",
+                        "score": 0.05,
+                        "probabilities": {"0": 0.95, "1": 0.03, "2": 0.01, "3": 0.01, "4": 0.0},
+                        "confidence": 0.95,
+                    }
+                }
+            }
+        ).encode("utf-8")
+        decision_resp.__enter__.return_value = decision_resp
+        mock_urlopen.return_value = decision_resp
+
+        rule = Rule(
+            id="org-02-security-and-secrets",
+            title="Security Policy & Secret Sanitization",
+            severity_default="CRITICAL",
+            tier="org",
+            applies_to=["**/*"],
+            content="Never commit hardcoded credentials.",
+        )
+
+        cfg = GeminiClientConfig(backend="google_ai", api_key="test-key", review_mode="hybrid")
+        client = GeminiReviewClient(config=cfg, cache_dir=self.cache_dir)
+        res = client.review_diff(
+            diff_text="+ x = 42",
+            rules_text="rule text",
+            staged_files=["app.py"],
+            matched_rules=[rule],
+        )
+
+        self.assertTrue(res.passed)
+        self.assertEqual(len(res.violations), 0)
+        self.assertIn("gemini-decision-1", res.summary)
+        # Only 1 HTTP call (to /v1beta/decisions), 0 calls to :generateContent
+        self.assertEqual(mock_urlopen.call_count, 1)
+        req_arg = mock_urlopen.call_args[0][0]
+        self.assertIn("/v1beta/decisions", req_arg.full_url)
+
+    @patch("urllib.request.urlopen")
+    def test_hybrid_stage1_warn_only_returns_immediately_without_stage2(self, mock_urlopen) -> None:
+        """When gemini-decision-1 flags only WARN/INFO advisories in hybrid mode, it returns immediately."""
+        decision_resp = MagicMock()
+        decision_resp.read.return_value = json.dumps(
+            {
+                "answers": {
+                    "team-02-code-quality": {
+                        "type": "score",
+                        "score": 2.0,
+                        "probabilities": {"0": 0.10, "1": 0.05, "2": 0.80, "3": 0.05, "4": 0.0},
+                        "confidence": 0.82,
+                    }
+                }
+            }
+        ).encode("utf-8")
+        decision_resp.__enter__.return_value = decision_resp
+        mock_urlopen.return_value = decision_resp
+
+        rule = Rule(
+            id="team-02-code-quality",
+            title="Code Quality & Typing",
+            severity_default="WARN",
+            tier="team",
+            applies_to=["**/*.py"],
+            content="- Add type annotations to functions.",
+        )
+
+        cfg = GeminiClientConfig(backend="google_ai", api_key="test-key", review_mode="hybrid")
+        client = GeminiReviewClient(config=cfg, cache_dir=self.cache_dir)
+        res = client.review_diff(
+            diff_text="+ def helper(x): return x",
+            rules_text="rule text",
+            staged_files=["utils.py"],
+            matched_rules=[rule],
+        )
+
+        self.assertTrue(res.passed)
+        self.assertEqual(len(res.violations), 1)
+        self.assertEqual(res.violations[0].severity, "WARN")
+        self.assertEqual(res.violations[0].rule_id, "team-02-code-quality")
+        self.assertAlmostEqual(res.violations[0].confidence or 0.0, 0.82)
+        self.assertEqual(mock_urlopen.call_count, 1)
+
+    @patch("urllib.request.urlopen")
+    def test_hybrid_stage1_critical_escalates_to_stage2_flash_for_remediation(self, mock_urlopen) -> None:
+        """When gemini-decision-1 flags CRITICAL/ERROR, Stage 2 (gemini-3.8-flash) generates code diffs."""
+        decision_resp = MagicMock()
+        decision_resp.read.return_value = json.dumps(
+            {
+                "answers": {
+                    "org-02-security-and-secrets": {
+                        "type": "score",
+                        "score": 3.85,
+                        "probabilities": {"0": 0.02, "1": 0.0, "2": 0.03, "3": 0.05, "4": 0.90},
+                        "confidence": 0.93,
+                    },
+                    "team-02-code-quality": {
+                        "type": "score",
+                        "score": 0.02,
+                        "probabilities": {"0": 0.98, "1": 0.02, "2": 0.0, "3": 0.0, "4": 0.0},
+                        "confidence": 0.98,
+                    },
+                }
+            }
+        ).encode("utf-8")
+        decision_resp.__enter__.return_value = decision_resp
+
+        flash_inner = json.dumps(
+            {
+                "passed": False,
+                "summary": "Hardcoded API secret detected.",
+                "violations": [
+                    {
+                        "file": "config.py",
+                        "line_number": 12,
+                        "rule_id": "org-02-security-and-secrets",
+                        "rule_title": "Security Policy & Secret Sanitization",
+                        "severity": "CRITICAL",
+                        "issue": "Plaintext API token assigned to API_SECRET.",
+                        "suggested_fix": "Load secret from environment variable via os.getenv('API_SECRET').",
+                        "suggested_code_diff": "-API_SECRET = 'sk-live-123'\n+API_SECRET = os.getenv('API_SECRET')",
+                    }
+                ],
+            }
+        )
+        flash_resp = MagicMock()
+        flash_resp.read.return_value = json.dumps(
+            {"candidates": [{"content": {"parts": [{"text": flash_inner}]}}]}
+        ).encode("utf-8")
+        flash_resp.__enter__.return_value = flash_resp
+
+        mock_urlopen.side_effect = [decision_resp, flash_resp]
+
+        org_rule = Rule(
+            id="org-02-security-and-secrets",
+            title="Security Policy & Secret Sanitization",
+            severity_default="CRITICAL",
+            tier="org",
+            applies_to=["**/*"],
+            content="Never commit hardcoded credentials.",
+        )
+        team_rule = Rule(
+            id="team-02-code-quality",
+            title="Code Quality & Typing",
+            severity_default="WARN",
+            tier="team",
+            applies_to=["**/*.py"],
+            content="Use type annotations.",
+        )
+
+        cfg = GeminiClientConfig(backend="google_ai", api_key="test-key", review_mode="hybrid")
+        client = GeminiReviewClient(config=cfg, cache_dir=self.cache_dir)
+        res = client.review_diff(
+            diff_text="+ API_SECRET = 'sk-live-123'",
+            rules_text="all rules text",
+            staged_files=["config.py"],
+            matched_rules=[org_rule, team_rule],
+        )
+
+        self.assertFalse(res.passed)
+        self.assertEqual(len(res.violations), 1)
+        v = res.violations[0]
+        self.assertEqual(v.severity, "CRITICAL")
+        self.assertEqual(v.line_number, 12)
+        self.assertIn("os.getenv", v.suggested_code_diff)
+        self.assertAlmostEqual(v.confidence or 0.0, 0.93)
+        self.assertEqual(mock_urlopen.call_count, 2)
+
+        # Verify Stage 2 prompt only included the flagged org-02 rule, not the compliant team-02 rule
+        stage2_req = mock_urlopen.call_args_list[1][0][0]
+        stage2_body = json.loads(stage2_req.data.decode("utf-8"))
+        stage2_prompt = stage2_body["contents"][0]["parts"][0]["text"]
+        self.assertIn("org-02-security-and-secrets", stage2_prompt)
+        self.assertNotIn("team-02-code-quality", stage2_prompt)
+
+    @patch("urllib.request.urlopen")
+    def test_hybrid_stage2_failure_falls_back_to_stage1_blocking_violations(self, mock_urlopen) -> None:
+        """If Stage 2 (gemini-3.8-flash) errors out, Stage 1's CRITICAL violation still blocks the commit."""
+        decision_resp = MagicMock()
+        decision_resp.read.return_value = json.dumps(
+            {
+                "answers": {
+                    "org-02-security-and-secrets": {
+                        "type": "score",
+                        "score": 3.9,
+                        "probabilities": {"0": 0.01, "1": 0.0, "2": 0.0, "3": 0.09, "4": 0.90},
+                        "confidence": 0.95,
+                    }
+                }
+            }
+        ).encode("utf-8")
+        decision_resp.__enter__.return_value = decision_resp
+
+        mock_urlopen.side_effect = [decision_resp, TimeoutError("Stage 2 timed out")]
+
+        org_rule = Rule(
+            id="org-02-security-and-secrets",
+            title="Security Policy & Secret Sanitization",
+            severity_default="CRITICAL",
+            tier="org",
+            applies_to=["**/*"],
+            content="- Plaintext API tokens are strictly prohibited.",
+        )
+
+        cfg = GeminiClientConfig(backend="google_ai", api_key="test-key", review_mode="hybrid")
+        client = GeminiReviewClient(config=cfg, cache_dir=self.cache_dir)
+        res = client.review_diff(
+            diff_text="+ API_SECRET = 'sk-live-123'",
+            rules_text="all rules text",
+            staged_files=["config.py"],
+            matched_rules=[org_rule],
+        )
+
+        self.assertFalse(res.passed)
+        self.assertEqual(len(res.violations), 1)
+        self.assertEqual(res.violations[0].severity, "CRITICAL")
+        self.assertEqual(res.violations[0].rule_id, "org-02-security-and-secrets")
+
+    @patch("urllib.request.urlopen")
+    def test_check_rule_collision_with_decision_noul_fast_pass(self, mock_urlopen) -> None:
+        """When higher_rules are provided, check_rule_collision uses parallel noul questions and returns in 1 call if clean."""
+        decision_resp = MagicMock()
+        decision_resp.read.return_value = json.dumps(
+            {
+                "answers": {
+                    "org-01-meta-guidelines": {"type": "noul", "noul": 0.03, "confidence": 0.97},
+                    "org-02-security-and-secrets": {"type": "noul", "noul": 0.02, "confidence": 0.98},
+                }
+            }
+        ).encode("utf-8")
+        decision_resp.__enter__.return_value = decision_resp
+        mock_urlopen.return_value = decision_resp
+
+        higher_rules = [
+            Rule(
+                id="org-01-meta-guidelines",
+                title="Branch Protection",
+                severity_default="CRITICAL",
+                tier="org",
+                content="Never commit directly to main.",
+            ),
+            Rule(
+                id="org-02-security-and-secrets",
+                title="Zero Hardcoded Secrets",
+                severity_default="CRITICAL",
+                tier="org",
+                content="Never hardcode API keys.",
+            ),
+        ]
+
+        cfg = GeminiClientConfig(backend="google_ai", api_key="test-key", review_mode="hybrid")
+        client = GeminiReviewClient(config=cfg, cache_dir=self.cache_dir)
+        res = client.check_rule_collision(
+            proposed_rule="Prefer pathlib.Path over os.path",
+            higher_tier_rules_text="rules summary",
+            higher_rules=higher_rules,
+        )
+
+        self.assertFalse(res.has_collision)
+        self.assertEqual(len(res.conflicts), 0)
+        self.assertEqual(mock_urlopen.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

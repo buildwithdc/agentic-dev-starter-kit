@@ -20,16 +20,22 @@ if str(SCRIPT_DIR) not in sys.path:
 try:
     from scripts.constants import DEFAULT_AUDIT_LOG_PATH as CONST_AUDIT_LOG_PATH
     from scripts.constants import (
+        DEFAULT_DECISION_MODEL,
         DEFAULT_DEP_DEPTH,
         DEFAULT_MAX_DEP_CHARS,
+        DEFAULT_REVIEW_MODE,
         RULES_DIR_NAME,
+        VALID_REVIEW_MODES,
     )
 except ImportError:
     from constants import DEFAULT_AUDIT_LOG_PATH as CONST_AUDIT_LOG_PATH
     from constants import (
+        DEFAULT_DECISION_MODEL,
         DEFAULT_DEP_DEPTH,
         DEFAULT_MAX_DEP_CHARS,
+        DEFAULT_REVIEW_MODE,
         RULES_DIR_NAME,
+        VALID_REVIEW_MODES,
     )
 
 from dependency_scanner import DependencyContext, scan_dependencies
@@ -148,7 +154,8 @@ def format_violation(v: ReviewViolation) -> str:
     """Format a single violation for terminal display."""
     color = RED if v.severity in ("CRITICAL", "ERROR") else YELLOW
     loc = f"{v.file}:{v.line_number}" if v.line_number else v.file
-    badge = f"{color}[{v.severity}]{RESET}"
+    conf_str = f" ({v.confidence:.0%} confidence)" if v.confidence is not None else ""
+    badge = f"{color}[{v.severity}]{RESET}{conf_str}"
     rule = f"{BOLD}{v.rule_title}{RESET}" if v.rule_title else v.rule_id
 
     out = [f"  {badge} {BOLD}{loc}{RESET} — {rule}"]
@@ -296,6 +303,7 @@ def run_review(
         rules_text=rules_summary,
         staged_files=staged_files,
         dependency_context=dep_context.format_for_prompt(),
+        matched_rules=matched_rules,
     )
 
     # 7. Print report
@@ -355,7 +363,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--model",
         default=None,
-        help="Model name (default: gemini-3.8-flash)",
+        help="Generative model name for Stage 2 remediation (default: gemini-3.8-flash)",
+    )
+    parser.add_argument(
+        "--decision-model",
+        default=None,
+        help=f"Decision model name for Stage 1 parallel gating (default: {DEFAULT_DECISION_MODEL})",
+    )
+    parser.add_argument(
+        "--review-mode",
+        choices=list(VALID_REVIEW_MODES),
+        default=None,
+        help=f"Review execution mode: 'hybrid' (default), 'decision_only', or 'generative_only' (default: {DEFAULT_REVIEW_MODE})",
     )
     parser.add_argument(
         "--audit-file",
@@ -392,6 +411,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         cfg.location = args.location
     if args.model:
         cfg.model = args.model
+    if args.decision_model:
+        cfg.decision_model = args.decision_model
+    if args.review_mode:
+        cfg.review_mode = args.review_mode
 
     return run_review(
         rules_dir=args.rules_dir,

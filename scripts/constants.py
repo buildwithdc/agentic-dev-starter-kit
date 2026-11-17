@@ -92,6 +92,15 @@ ENV_MAX_DEP_CHARS = "GEMINI_MAX_DEP_CHARS"
 DEFAULT_DEP_DEPTH = 1
 DEFAULT_MAX_DEP_CHARS = 24000
 
+ENV_DECISION_MODEL = "GEMINI_DECISION_MODEL"
+ENV_REVIEW_MODE = "GEMINI_REVIEW_MODE"
+ENV_DECISION_THRESHOLD = "GEMINI_DECISION_THRESHOLD"
+
+DEFAULT_DECISION_MODEL = "gemini-decision-1"
+DEFAULT_REVIEW_MODE = "hybrid"
+DEFAULT_DECISION_THRESHOLD = 0.65
+VALID_REVIEW_MODES: tuple[str, ...] = ("hybrid", "decision_only", "generative_only")
+
 
 def get_rule_path(tier: str, rule_filename: str, root_dir: Path | None = None) -> Path:
     """Resolve full Path for a tier and rule filename."""

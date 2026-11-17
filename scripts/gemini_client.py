@@ -14,7 +14,33 @@ import urllib.request
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from rule_loader import Rule
+
+try:
+    from scripts.constants import (
+        DEFAULT_DECISION_MODEL,
+        DEFAULT_DECISION_THRESHOLD,
+        DEFAULT_REVIEW_MODE,
+        ENV_DECISION_MODEL,
+        ENV_DECISION_THRESHOLD,
+        ENV_REVIEW_MODE,
+        SEVERITY_PRIORITY,
+        VALID_REVIEW_MODES,
+    )
+except ImportError:
+    from constants import (
+        DEFAULT_DECISION_MODEL,
+        DEFAULT_DECISION_THRESHOLD,
+        DEFAULT_REVIEW_MODE,
+        ENV_DECISION_MODEL,
+        ENV_DECISION_THRESHOLD,
+        ENV_REVIEW_MODE,
+        SEVERITY_PRIORITY,
+        VALID_REVIEW_MODES,
+    )
 
 # Environment Variable Configuration Keys
 ENV_BACKEND = "GEMINI_BACKEND"
@@ -54,6 +80,7 @@ def sanitize_api_key(raw_key: str | None) -> str | None:
         return None
     return cleaned
 
+
 VERTEX_ENDPOINT_TEMPLATE = (
     "https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/"
     "locations/{location}/publishers/google/models/{model}:generateContent"
@@ -65,6 +92,24 @@ VERTEX_GLOBAL_ENDPOINT_TEMPLATE = (
 GOOGLE_AI_ENDPOINT_TEMPLATE = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 )
+GOOGLE_AI_DECISIONS_ENDPOINT = (
+    "https://generativelanguage.googleapis.com/v1beta/decisions"
+)
+
+DECISION_SEVERITY_CRITERIA: dict[str, str] = {
+    "0": "COMPLIANT: The staged diff fully complies with this rule or the rule is not applicable to the changes.",
+    "1": "INFO: Minor informational notice or non-critical observation.",
+    "2": "WARN: Advisory deviation from best practices that does not break contracts or security.",
+    "3": "ERROR: Clear violation of typed contracts, broken downstream callers, cyclic dependencies, or missing mock warnings.",
+    "4": "CRITICAL: Severe violation such as hardcoded secrets/credentials or direct main branch protection bypass.",
+}
+
+BUCKET_TO_SEVERITY: dict[str, str] = {
+    "1": "INFO",
+    "2": "WARN",
+    "3": "ERROR",
+    "4": "CRITICAL",
+}
 
 REVIEW_SCHEMA: dict[str, Any] = {
     "type": "OBJECT",
@@ -136,6 +181,7 @@ class ReviewViolation:
     line_number: int | None = None
     rule_id: str = ""
     suggested_code_diff: str = ""
+    confidence: float | None = None
 
 
 @dataclass
@@ -157,6 +203,7 @@ class RuleConflictDetail:
     rule_title: str
     tier: str
     reason: str
+    confidence: float | None = None
 
 
 @dataclass
@@ -170,19 +217,35 @@ class RuleCollisionResult:
 
 
 @dataclass
+class DecisionRuleEvaluation:
+    """Result of evaluating a single rule via Gemini Decisions API (`gemini-decision-1`)."""
+
+    rule: Any
+    severity: str
+    violation_probability: float
+    confidence: float
+    expected_score: float
+
+
+@dataclass
 class GeminiClientConfig:
     """Runtime configuration for Gemini Client."""
 
     backend: str = DEFAULT_BACKEND
     model: str = DEFAULT_MODEL
+    decision_model: str = DEFAULT_DECISION_MODEL
+    review_mode: str = DEFAULT_REVIEW_MODE
+    decision_threshold: float = DEFAULT_DECISION_THRESHOLD
     project_id: str | None = None
     location: str = DEFAULT_LOCATION
     timeout: float = DEFAULT_TIMEOUT
     api_key: str | None = None
 
     def __post_init__(self) -> None:
-        """Normalize placeholder API keys to None."""
+        """Normalize placeholder API keys and review_mode."""
         self.api_key = sanitize_api_key(self.api_key)
+        mode = (self.review_mode or DEFAULT_REVIEW_MODE).strip().lower()
+        self.review_mode = mode if mode in VALID_REVIEW_MODES else DEFAULT_REVIEW_MODE
 
     @classmethod
     def from_env(cls) -> GeminiClientConfig:
@@ -196,9 +259,20 @@ class GeminiClientConfig:
         else:
             backend = DEFAULT_BACKEND
 
+        raw_mode = os.getenv(ENV_REVIEW_MODE, DEFAULT_REVIEW_MODE).strip().lower()
+        review_mode = raw_mode if raw_mode in VALID_REVIEW_MODES else DEFAULT_REVIEW_MODE
+
+        try:
+            threshold = float(os.getenv(ENV_DECISION_THRESHOLD, str(DEFAULT_DECISION_THRESHOLD)))
+        except ValueError:
+            threshold = DEFAULT_DECISION_THRESHOLD
+
         return cls(
             backend=backend,
             model=os.getenv(ENV_MODEL, DEFAULT_MODEL),
+            decision_model=os.getenv(ENV_DECISION_MODEL, DEFAULT_DECISION_MODEL),
+            review_mode=review_mode,
+            decision_threshold=max(0.05, min(0.99, threshold)),
             project_id=os.getenv(ENV_PROJECT) or os.getenv(ENV_PROJECT_ALT),
             location=os.getenv(ENV_LOCATION) or os.getenv(ENV_LOCATION_ALT, DEFAULT_LOCATION),
             timeout=float(os.getenv(ENV_TIMEOUT, str(DEFAULT_TIMEOUT))),
@@ -324,7 +398,7 @@ def get_adc_access_token(cache_dir: Path | None = None) -> str | None:
 
 
 class GeminiReviewClient:
-    """Client for evaluating code diffs against best-practice rules via ADC."""
+    """Client for evaluating code diffs against best-practice rules via ADC or API Key."""
 
     def __init__(
         self,
@@ -344,8 +418,14 @@ class GeminiReviewClient:
         dependency_context: str = "",
     ) -> str:
         dep_part = f"\n{dependency_context}" if dependency_context else ""
+        mode_part = (
+            f":{self.config.review_mode}:{self.config.decision_model}"
+            if self.config.review_mode != DEFAULT_REVIEW_MODE
+            or self.config.decision_model != DEFAULT_DECISION_MODEL
+            else ""
+        )
         payload = (
-            f"{self.config.backend}:{self.config.model}:{self.config.project_id}\n"
+            f"{self.config.backend}:{self.config.model}:{self.config.project_id}{mode_part}\n"
             f"{rules_summary}\n{diff_text}{dep_part}"
         ).encode()
         return hashlib.sha256(payload).hexdigest()
@@ -450,10 +530,291 @@ class GeminiReviewClient:
 
         return url, headers, payload
 
+    def _prepare_decision_request(
+        self,
+        input_text: str,
+        questions: dict[str, Any],
+        token: str | None,
+    ) -> tuple[str, dict[str, str], dict[str, Any]]:
+        """Construct Gemini Decisions API (`/v1beta/decisions`) URL, headers, and payload."""
+        payload: dict[str, Any] = {
+            "model": self.config.decision_model,
+            "input": input_text,
+            "questions": questions,
+        }
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        url = GOOGLE_AI_DECISIONS_ENDPOINT
+
+        if self.config.api_key:
+            headers["x-goog-api-key"] = self.config.api_key
+        else:
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            if self.config.project_id:
+                headers["x-goog-user-project"] = self.config.project_id
+
+        return url, headers, payload
+
+    def evaluate_rules_decision(
+        self,
+        diff_text: str,
+        matched_rules: Sequence[Rule],
+        staged_files: Sequence[str] | None = None,
+        dependency_context: str = "",
+        token: str | None = None,
+    ) -> tuple[list[DecisionRuleEvaluation], bool]:
+        """Stage 1 (System 1): Evaluate matched rules in parallel via `gemini-decision-1`.
+
+        Returns `(flagged_evaluations, degraded_or_failed)`.
+        """
+        if not matched_rules:
+            return [], False
+
+        clean_dep = dependency_context.strip()
+        dep_section = (
+            f"\n\n### LOCAL DEPENDENCY CONTEXT (UPSTREAM & DOWNSTREAM):\n{clean_dep}"
+            if clean_dep
+            else ""
+        )
+        input_state = (
+            f"### STAGED FILES:\n{json.dumps(list(staged_files or []))}\n\n"
+            f"### STAGED DIFF:\n{diff_text}{dep_section}"
+        )
+
+        questions: dict[str, Any] = {}
+        for rule in matched_rules:
+            questions[rule.id] = {
+                "type": "score",
+                "instructions": (
+                    f"Evaluate whether the staged git diff violates this {rule.tier.upper()} "
+                    f"best-practice rule ({rule.title}, Default Severity: {rule.severity_default}). "
+                    "Use LOCAL DEPENDENCY CONTEXT strictly to detect relational contract breakage or "
+                    "cyclic dependencies introduced by the diff; never flag pre-existing issues in "
+                    f"untouched neighbor files.\n\nRule Specification:\n{rule.content}"
+                ),
+                "criteria": DECISION_SEVERITY_CRITERIA,
+            }
+
+        url, headers, payload = self._prepare_decision_request(input_state, questions, token)
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
+                resp_data = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return [], True
+
+        answers = resp_data.get("answers")
+        if not isinstance(answers, dict):
+            return [], True
+
+        flagged: list[DecisionRuleEvaluation] = []
+        for rule in matched_rules:
+            ans = answers.get(rule.id)
+            if not isinstance(ans, dict):
+                continue
+
+            probs = ans.get("probabilities", {})
+            if isinstance(probs, dict) and probs:
+                p_compliant = float(probs.get("0", 0.0))
+                p_violation = max(0.0, min(1.0, 1.0 - p_compliant))
+                non_zero_buckets = {k: float(probs.get(k, 0.0)) for k in ("1", "2", "3", "4")}
+                top_bucket = max(non_zero_buckets, key=lambda k: non_zero_buckets[k])
+                detected_severity = BUCKET_TO_SEVERITY.get(top_bucket, rule.severity_default)
+            else:
+                raw_score = float(ans.get("score", 0.0))
+                p_violation = min(1.0, raw_score / 4.0)
+                bucket_idx = str(max(1, min(4, round(raw_score))))
+                detected_severity = BUCKET_TO_SEVERITY.get(bucket_idx, rule.severity_default)
+
+            expected_score = float(ans.get("score", 0.0))
+            confidence = float(ans.get("confidence", p_violation))
+
+            # Use slightly stricter threshold for Tier 1 Org guardrails
+            rule_threshold = (
+                max(0.50, self.config.decision_threshold - 0.05)
+                if rule.tier.lower() == "org"
+                else self.config.decision_threshold
+            )
+
+            if p_violation >= rule_threshold and expected_score >= 0.85:
+                # Non-weakening floor for Tier 1 ORG CRITICAL rules:
+                # If an ORG rule with CRITICAL default is substantively violated, enforce at least ERROR/CRITICAL
+                if (
+                    rule.tier.lower() == "org"
+                    and rule.severity_default.upper() in ("CRITICAL", "ERROR")
+                    and expected_score >= 2.0
+                    and SEVERITY_PRIORITY.get(detected_severity, 1)
+                    < SEVERITY_PRIORITY.get(rule.severity_default.upper(), 2)
+                ):
+                    detected_severity = rule.severity_default.upper()
+
+                flagged.append(
+                    DecisionRuleEvaluation(
+                        rule=rule,
+                        severity=detected_severity,
+                        violation_probability=round(p_violation, 4),
+                        confidence=round(confidence, 4),
+                        expected_score=round(expected_score, 4),
+                    )
+                )
+
+        return flagged, False
+
+    def _build_decision_only_violations(
+        self,
+        flagged_evals: Sequence[DecisionRuleEvaluation],
+        staged_files: Sequence[str] | None = None,
+    ) -> list[ReviewViolation]:
+        """Construct structured ReviewViolation records directly from Stage 1 decision outputs."""
+        primary_file = staged_files[0] if staged_files else "staged_diff"
+        violations: list[ReviewViolation] = []
+        for ev in flagged_evals:
+            rule = ev.rule
+            first_line = next(
+                (
+                    line.strip().lstrip("-*# ").strip()
+                    for line in rule.content.splitlines()
+                    if line.strip() and not line.strip().startswith("#")
+                ),
+                rule.title,
+            )
+            violations.append(
+                ReviewViolation(
+                    file=primary_file,
+                    line_number=None,
+                    rule_id=rule.id,
+                    rule_title=rule.title,
+                    severity=ev.severity,
+                    issue=(
+                        f"Gemini Decision 1 flagged a {ev.severity} violation of "
+                        f"[{rule.tier.upper()}] {rule.id} (probability={ev.violation_probability:.0%})."
+                    ),
+                    suggested_fix=f"Ensure staged changes satisfy '{rule.title}': {first_line}",
+                    suggested_code_diff="",
+                    confidence=ev.confidence,
+                )
+            )
+        return violations
+
+    def _generate_remediation_with_flash(
+        self,
+        diff_text: str,
+        rules_text: str,
+        staged_files: Sequence[str] | None,
+        clean_dep_context: str,
+        token: str | None,
+        flagged_evals: Sequence[DecisionRuleEvaluation] | None = None,
+    ) -> ReviewResult | None:
+        """Stage 2 (System 2): Invoke generative Gemini model (`gemini-3.8-flash`) to synthesize exact locations and remediation diffs."""
+        dep_section = (
+            f"### LOCAL DEPENDENCY CONTEXT (UPSTREAM & DOWNSTREAM):\n{clean_dep_context}\n\n"
+            if clean_dep_context
+            else ""
+        )
+
+        if flagged_evals:
+            scoped_rules_text = "\n\n".join(
+                f"--- Flagged Rule: {ev.rule.id} ({ev.rule.title}) [Tier: {ev.rule.tier.upper()}] "
+                f"[Stage-1 Detected Severity: {ev.severity} | Violation Probability: {ev.violation_probability:.0%}] ---\n"
+                f"{ev.rule.content}"
+                for ev in flagged_evals
+            )
+        else:
+            scoped_rules_text = rules_text
+
+        prompt = (
+            "You are an automated pre-commit code review assistant. Evaluate the following "
+            "staged git diff against the repository's canonical best-practice rules.\n\n"
+            f"### CANONICAL RULES:\n{scoped_rules_text}\n\n"
+            f"### STAGED FILES:\n{json.dumps(list(staged_files or []))}\n\n"
+            f"### STAGED DIFF:\n{diff_text}\n\n"
+            f"{dep_section}"
+            "Instructions:\n"
+            "1. Check if any rule is violated in the diff.\n"
+            "2. Assign severity 'CRITICAL' for hard security secrets / main branch bypass, "
+            "'ERROR' for broken typed interfaces, broken downstream callers, cyclic dependencies, or missing mock warnings, and 'WARN' for general advice.\n"
+            "3. If no violations exist, set passed=true and violations=[].\n"
+            "4. Return strictly valid JSON adhering to the provided schema.\n"
+            "5. HIERARCHICAL PRECEDENCE DIRECTIVE: Rules tagged [Tier: ORG] strictly supersede [Tier: TEAM], "
+            "which strictly supersede [Tier: PERSONAL]. If a lower-tier rule attempts to permit, relax, "
+            "carve out exceptions to, or contradict a constraint mandated by a higher-tier rule, you MUST "
+            "disregard the lower-tier allowance and strictly enforce the higher-tier requirement. "
+            "Lower tiers can ONLY add stricter constraints, never weaken higher ones.\n"
+            "6. RELATIONAL DEPENDENCY EVALUATION DIRECTIVE: When LOCAL DEPENDENCY CONTEXT is provided, "
+            "use it strictly to detect cross-file impact caused by the staged diff (e.g., breaking a downstream "
+            "caller's signature/contract, violating an upstream typed interface, or introducing cyclic/layer "
+            "boundary violations). NEVER flag pre-existing, unrelated issues in untouched neighbor files."
+        )
+
+        url, headers, payload = self._prepare_request(prompt, token)
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+
+        confidence_by_rule_id = (
+            {ev.rule.id: ev.confidence for ev in flagged_evals} if flagged_evals else {}
+        )
+        confidence_by_title = (
+            {ev.rule.title.lower(): ev.confidence for ev in flagged_evals} if flagged_evals else {}
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
+                resp_data = json.loads(resp.read().decode("utf-8"))
+                candidate = resp_data.get("candidates", [{}])[0]
+                text = (
+                    candidate.get("content", {})
+                    .get("parts", [{}])[0]
+                    .get("text", "{}")
+                )
+                raw_json = json.loads(text)
+
+                violations: list[ReviewViolation] = []
+                for v in raw_json.get("violations", []):
+                    r_id = str(v.get("rule_id", ""))
+                    r_title = str(v.get("rule_title", ""))
+                    conf = confidence_by_rule_id.get(r_id) or confidence_by_title.get(
+                        r_title.lower()
+                    )
+                    violations.append(
+                        ReviewViolation(
+                            file=str(v.get("file", "unknown")),
+                            line_number=v.get("line_number"),
+                            rule_id=r_id,
+                            rule_title=r_title,
+                            severity=str(v.get("severity", "WARN")).upper(),
+                            issue=str(v.get("issue", "")),
+                            suggested_fix=str(v.get("suggested_fix", "")),
+                            suggested_code_diff=str(v.get("suggested_code_diff", "")),
+                            confidence=conf,
+                        )
+                    )
+
+                hard_failures = [v for v in violations if v.severity in ("CRITICAL", "ERROR")]
+                passed = raw_json.get("passed", True) and len(hard_failures) == 0
+
+                return ReviewResult(
+                    passed=passed,
+                    summary=raw_json.get("summary", "Review complete."),
+                    violations=violations,
+                )
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, Exception):
+            return None
+
     def check_rule_collision(
         self,
         proposed_rule: str,
         higher_tier_rules_text: str,
+        higher_rules: Sequence[Rule] | None = None,
     ) -> RuleCollisionResult:
         """Evaluate whether a proposed personal preference semantically conflicts with or weakens higher-tier rules (Org, Team)."""
         clean_rule = proposed_rule.strip()
@@ -467,6 +828,82 @@ class GeminiReviewClient:
                 summary=err,
                 degraded=True,
             )
+
+        # Stage 1 (System 1): Parallel `noul` evaluation via `gemini-decision-1` when structured rules are provided
+        if higher_rules and self.config.review_mode in ("hybrid", "decision_only"):
+            questions: dict[str, Any] = {}
+            for r in higher_rules:
+                questions[r.id] = {
+                    "type": "noul",
+                    "instructions": (
+                        f"Does the proposed personal preference contradict, relax, bypass, or carve out "
+                        f"an exception to this {r.tier.upper()} rule ({r.title})?\n\n"
+                        f"Canonical {r.tier.upper()} Rule:\n{r.content}"
+                    ),
+                    "criteria": {
+                        "true_description": "The proposed preference conflicts with, relaxes, or weakens this higher-tier rule.",
+                        "false_description": "The proposed preference is compatible with or orthogonal to this rule.",
+                    },
+                }
+
+            input_state = f"### PROPOSED PERSONAL PREFERENCE:\n{clean_rule}"
+            url, headers, payload = self._prepare_decision_request(input_state, questions, token)
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
+                    resp_data = json.loads(resp.read().decode("utf-8"))
+                answers = resp_data.get("answers")
+                if isinstance(answers, dict):
+                    colliding_rules: list[tuple[Rule, float, float]] = []
+                    for r in higher_rules:
+                        ans = answers.get(r.id)
+                        if not isinstance(ans, dict):
+                            continue
+                        noul_prob = float(ans.get("noul", 0.0))
+                        conf = float(ans.get("confidence", noul_prob))
+                        if noul_prob >= self.config.decision_threshold:
+                            colliding_rules.append((r, noul_prob, conf))
+
+                    if not colliding_rules:
+                        return RuleCollisionResult(
+                            has_collision=False,
+                            summary="No collisions detected with higher-tiered rules (evaluated via gemini-decision-1).",
+                            conflicts=[],
+                        )
+
+                    if self.config.review_mode == "decision_only":
+                        conflicts = [
+                            RuleConflictDetail(
+                                rule_id=r.id,
+                                rule_title=r.title,
+                                tier=r.tier.upper(),
+                                reason=(
+                                    f"Proposed preference conflicts with or weakens [{r.tier.upper()}] "
+                                    f"{r.title} (collision probability={prob:.0%})."
+                                ),
+                                confidence=round(conf, 4),
+                            )
+                            for r, prob, conf in colliding_rules
+                        ]
+                        return RuleCollisionResult(
+                            has_collision=True,
+                            summary=f"Detected {len(conflicts)} collision(s) via gemini-decision-1.",
+                            conflicts=conflicts,
+                        )
+
+                    # In hybrid mode, narrow higher_tier_rules_text to only the colliding rules for Stage 2 reason generation
+                    higher_tier_rules_text = "\n\n".join(
+                        f"--- Rule: {r.id} ({r.title}) [Tier: {r.tier.upper()}] [Collision Probability: {prob:.0%}] ---\n{r.content}"
+                        for r, prob, _ in colliding_rules
+                    )
+            except Exception:
+                # Fall through to generative check if decision endpoint is unavailable
+                pass
 
         prompt = (
             "You are an authoritative AI rules governance auditor. Evaluate whether the following "
@@ -535,8 +972,9 @@ class GeminiReviewClient:
         rules_text: str,
         staged_files: Sequence[str] | None = None,
         dependency_context: str = "",
+        matched_rules: Sequence[Rule] | None = None,
     ) -> ReviewResult:
-        """Evaluate staged diff against rules using Gemini Flash via ADC."""
+        """Evaluate staged diff against rules using System 1 (`gemini-decision-1`) + System 2 (`gemini-3.8-flash`) hybrid pipeline."""
         if not diff_text.strip():
             return ReviewResult(
                 passed=True,
@@ -559,86 +997,100 @@ class GeminiReviewClient:
                 degraded=True,
             )
 
-        dep_section = (
-            f"### LOCAL DEPENDENCY CONTEXT (UPSTREAM & DOWNSTREAM):\n{clean_dep_context}\n\n"
-            if clean_dep_context
-            else ""
-        )
-
-        prompt = (
-            "You are an automated pre-commit code review assistant. Evaluate the following "
-            "staged git diff against the repository's canonical best-practice rules.\n\n"
-            f"### CANONICAL RULES:\n{rules_text}\n\n"
-            f"### STAGED FILES:\n{json.dumps(list(staged_files or []))}\n\n"
-            f"### STAGED DIFF:\n{diff_text}\n\n"
-            f"{dep_section}"
-            "Instructions:\n"
-            "1. Check if any rule is violated in the diff.\n"
-            "2. Assign severity 'CRITICAL' for hard security secrets / main branch bypass, "
-            "'ERROR' for broken typed interfaces, broken downstream callers, cyclic dependencies, or missing mock warnings, and 'WARN' for general advice.\n"
-            "3. If no violations exist, set passed=true and violations=[].\n"
-            "4. Return strictly valid JSON adhering to the provided schema.\n"
-            "5. HIERARCHICAL PRECEDENCE DIRECTIVE: Rules tagged [Tier: ORG] strictly supersede [Tier: TEAM], "
-            "which strictly supersede [Tier: PERSONAL]. If a lower-tier rule attempts to permit, relax, "
-            "carve out exceptions to, or contradict a constraint mandated by a higher-tier rule, you MUST "
-            "disregard the lower-tier allowance and strictly enforce the higher-tier requirement. "
-            "Lower tiers can ONLY add stricter constraints, never weaken higher ones.\n"
-            "6. RELATIONAL DEPENDENCY EVALUATION DIRECTIVE: When LOCAL DEPENDENCY CONTEXT is provided, "
-            "use it strictly to detect cross-file impact caused by the staged diff (e.g., breaking a downstream "
-            "caller's signature/contract, violating an upstream typed interface, or introducing cyclic/layer "
-            "boundary violations). NEVER flag pre-existing, unrelated issues in untouched neighbor files."
-        )
-
-        url, headers, payload = self._prepare_request(prompt, token)
-
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
-
-        try:
-            with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
-                resp_data = json.loads(resp.read().decode("utf-8"))
-                candidate = resp_data.get("candidates", [{}])[0]
-                text = (
-                    candidate.get("content", {})
-                    .get("parts", [{}])[0]
-                    .get("text", "{}")
-                )
-                raw_json = json.loads(text)
-
-                violations = [
-                    ReviewViolation(
-                        file=str(v.get("file", "unknown")),
-                        line_number=v.get("line_number"),
-                        rule_id=str(v.get("rule_id", "")),
-                        rule_title=str(v.get("rule_title", "")),
-                        severity=str(v.get("severity", "WARN")).upper(),
-                        issue=str(v.get("issue", "")),
-                        suggested_fix=str(v.get("suggested_fix", "")),
-                        suggested_code_diff=str(v.get("suggested_code_diff", "")),
-                    )
-                    for v in raw_json.get("violations", [])
-                ]
-
-                hard_failures = [v for v in violations if v.severity in ("CRITICAL", "ERROR")]
-                passed = raw_json.get("passed", True) and len(hard_failures) == 0
-
-                result = ReviewResult(
-                    passed=passed,
-                    summary=raw_json.get("summary", "Review complete."),
-                    violations=violations,
-                )
-                self._save_cached_result(cache_key, result)
-                return result
-
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError) as e:
-            # Graceful degradation on network/API failure
-            return ReviewResult(
-                passed=True,
-                summary=f"Review skipped: API call encountered {type(e).__name__} ({e}). Graceful fallback enabled.",
-                violations=[],
-                degraded=True,
+        # Stage 1 (System 1): Parallel Discriminative Gate via `gemini-decision-1`
+        if matched_rules and self.config.review_mode in ("hybrid", "decision_only"):
+            flagged_evals, decision_failed = self.evaluate_rules_decision(
+                diff_text=diff_text,
+                matched_rules=matched_rules,
+                staged_files=staged_files,
+                dependency_context=clean_dep_context,
+                token=token,
             )
+
+            if not decision_failed:
+                # Fast Path 1: Zero violations detected across all matched rules (~150-250ms)
+                if not flagged_evals:
+                    fast_pass = ReviewResult(
+                        passed=True,
+                        summary=f"All {len(matched_rules)} rule(s) passed via {self.config.decision_model}.",
+                        violations=[],
+                    )
+                    self._save_cached_result(cache_key, fast_pass)
+                    return fast_pass
+
+                has_hard_violation = any(
+                    ev.severity in ("CRITICAL", "ERROR") for ev in flagged_evals
+                )
+
+                # Fast Path 2: Decision-only mode OR non-blocking advisories (WARN / INFO) in hybrid mode
+                if self.config.review_mode == "decision_only" or not has_hard_violation:
+                    decision_violations = self._build_decision_only_violations(
+                        flagged_evals, staged_files=staged_files
+                    )
+                    result = ReviewResult(
+                        passed=not has_hard_violation,
+                        summary=(
+                            f"Evaluated {len(matched_rules)} rule(s) via {self.config.decision_model}: "
+                            f"{len(decision_violations)} violation(s) flagged."
+                        ),
+                        violations=decision_violations,
+                    )
+                    self._save_cached_result(cache_key, result)
+                    return result
+
+                # Stage 2 (System 2) Escalation: Hard violation(s) detected in hybrid mode.
+                # Call `gemini-3.8-flash` scoped strictly to the violated rules to generate code diffs & fixes.
+                stage2_result = self._generate_remediation_with_flash(
+                    diff_text=diff_text,
+                    rules_text=rules_text,
+                    staged_files=staged_files,
+                    clean_dep_context=clean_dep_context,
+                    token=token,
+                    flagged_evals=flagged_evals,
+                )
+                if stage2_result is not None and stage2_result.violations:
+                    self._save_cached_result(cache_key, stage2_result)
+                    return stage2_result
+
+                # Fallback to Stage 1 deterministic violations if Stage 2 fails or returns empty
+                fallback_violations = self._build_decision_only_violations(
+                    flagged_evals, staged_files=staged_files
+                )
+                fallback_result = ReviewResult(
+                    passed=False,
+                    summary=(
+                        f"Commit blocked by {self.config.decision_model} "
+                        f"({len(fallback_violations)} violation(s) detected)."
+                    ),
+                    violations=fallback_violations,
+                )
+                self._save_cached_result(cache_key, fallback_result)
+                return fallback_result
+
+            if self.config.review_mode == "decision_only":
+                return ReviewResult(
+                    passed=True,
+                    summary=f"Review skipped: {self.config.decision_model} call failed. Graceful fallback enabled.",
+                    violations=[],
+                    degraded=True,
+                )
+
+        # Standard Generative Path (`generative_only` or fallback when `matched_rules` not supplied)
+        gen_result = self._generate_remediation_with_flash(
+            diff_text=diff_text,
+            rules_text=rules_text,
+            staged_files=staged_files,
+            clean_dep_context=clean_dep_context,
+            token=token,
+            flagged_evals=None,
+        )
+        if gen_result is not None:
+            self._save_cached_result(cache_key, gen_result)
+            return gen_result
+
+        return ReviewResult(
+            passed=True,
+            summary="Review skipped: API call encountered an error. Graceful fallback enabled.",
+            violations=[],
+            degraded=True,
+        )

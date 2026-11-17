@@ -130,6 +130,15 @@ def run_doctor(argv: Sequence[str] | None = None) -> int:
     remote_endpoint = getattr(cfg, "remote_agent_endpoint", None)
     if remote_endpoint:
         print(f"Review Mode:   Remote GCP Agent ({remote_endpoint})")
+    elif cfg.review_mode == "hybrid":
+        print(
+            f"Review Mode:   Hybrid [System 1: {cfg.decision_model} -> System 2: {cfg.model}] "
+            f"(backend={cfg.backend})"
+        )
+    elif cfg.review_mode == "decision_only":
+        print(
+            f"Review Mode:   Decision Only [System 1: {cfg.decision_model}] (backend={cfg.backend})"
+        )
     else:
         print(f"Review Mode:   Direct Gemini API (backend={cfg.backend}, model={cfg.model})")
 
