@@ -27,7 +27,7 @@ try:
         GeminiReviewClient,
         RuleCollisionResult,
     )
-    from scripts.rule_loader import load_rules
+    from scripts.rule_loader import _parse_yaml_frontmatter, load_rules
     from scripts.sync_org_rules import load_dotenv
 except ImportError:
     from constants import (
@@ -38,7 +38,7 @@ except ImportError:
         GeminiReviewClient,
         RuleCollisionResult,
     )
-    from rule_loader import load_rules
+    from rule_loader import _parse_yaml_frontmatter, load_rules
     from sync_org_rules import load_dotenv
 
 DEFAULT_RULE_RELATIVE_PATH = DEFAULT_PERSONAL_PREFERENCES_PATH
@@ -110,54 +110,6 @@ This document captures customized workflow guidelines, developer preferences, an
 ## 3. Tooling & Environment Preferences
 <!-- CLI, editor, testing, and operational environment preferences -->
 """
-
-
-def _parse_yaml_frontmatter(content: str) -> tuple[dict[str, object], str]:
-    """Extract YAML frontmatter and body from Markdown."""
-    lines = content.splitlines()
-    if not lines or lines[0].strip() != "---":
-        return {}, content
-
-    end_idx = -1
-    for idx, line in enumerate(lines[1:], start=1):
-        if line.strip() == "---":
-            end_idx = idx
-            break
-
-    if end_idx == -1:
-        return {}, content
-
-    frontmatter_lines = lines[1:end_idx]
-    body = "\n".join(lines[end_idx + 1 :]).strip()
-
-    metadata: dict[str, object] = {}
-    current_key: str | None = None
-    current_list: list[str] | None = None
-
-    for raw_line in frontmatter_lines:
-        line = raw_line.rstrip()
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-
-        if stripped.startswith("- ") and current_key and current_list is not None:
-            item = stripped[2:].strip().strip("\"'")
-            current_list.append(item)
-            continue
-
-        if ":" in line:
-            key, val = line.split(":", 1)
-            key = key.strip()
-            val = val.strip().strip("\"'")
-            current_key = key
-            if not val:
-                current_list = []
-                metadata[key] = current_list
-            else:
-                current_list = None
-                metadata[key] = val
-
-    return metadata, body
 
 
 def _dump_yaml_frontmatter(metadata: dict[str, object]) -> str:

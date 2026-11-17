@@ -254,10 +254,9 @@ CLAUDE_GITIGNORE_ENTRIES: tuple[str, ...] = (
 )
 
 RUNTIME_STATE_GITIGNORE_ENTRIES: tuple[str, ...] = (
-    f"{RULES_DIR_NAME}/",
-    f"{RULES_DIR_NAME}/{ORG_TIER_DIR_NAME}/",
-    f"{RULES_DIR_NAME}/{TEAM_TIER_DIR_NAME}/",
-    f"{RULES_DIR_NAME}/{PERSONAL_TIER_DIR_NAME}/",
+    f"{RULES_DIR_NAME}/{PERSONAL_TIER_DIR_NAME}/*",
+    f"!{RULES_DIR_NAME}/{PERSONAL_TIER_DIR_NAME}/.gitkeep",
+    f"{RULES_DIR_NAME}/{ORG_TIER_DIR_NAME}/.sync_timestamp",
     ".agents/audit.log",
     ".llm_cache/",
     ".git/.llm_cache/",

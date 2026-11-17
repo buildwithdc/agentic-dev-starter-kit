@@ -146,8 +146,8 @@ def is_sync_needed(
     try:
         content = ts_file.read_text(encoding="utf-8").strip()
         _, status, age = _parse_timestamp_age(content, ts_file.stat().st_mtime)
-        if status == "BACKOFF" and age >= DEFAULT_RETRY_INTERVAL_SECONDS:
-            return True
+        if status == "BACKOFF":
+            return age >= min(interval_seconds, DEFAULT_RETRY_INTERVAL_SECONDS)
         if age >= interval_seconds:
             return True
 

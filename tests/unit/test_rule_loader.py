@@ -170,6 +170,18 @@ class TestRuleLoader(unittest.TestCase):
         self.assertEqual(rule_map["team-01-architecture"].tier, "team")
         self.assertEqual(rule_map["personal-01-preferences"].tier, "personal")
 
+    def test_inline_yaml_list_frontmatter_parsing(self) -> None:
+        inline_dir = self.rules_path / "inline"
+        inline_dir.mkdir(parents=True, exist_ok=True)
+        (inline_dir / "team-02-inline.md").write_text(
+            '---\nid: team-02-inline\ntitle: Inline Rule\napplies_to: ["src/**/*.py", "scripts/*.py"]\ntags: [typing, lint]\n---\nBody\n',
+            encoding="utf-8",
+        )
+        rules = load_rules(inline_dir, include_personal=False, include_global=False)
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(rules[0].applies_to, ["src/**/*.py", "scripts/*.py"])
+        self.assertEqual(rules[0].tags, ["typing", "lint"])
+
 
 if __name__ == "__main__":
     unittest.main()

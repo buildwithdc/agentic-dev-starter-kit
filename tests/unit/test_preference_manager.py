@@ -63,6 +63,37 @@ class TestPreferenceManager(unittest.TestCase):
         self.assertIn("id: personal-01-preferences", reformatted)
         self.assertIn("Explicitly confirm before modifying", reformatted)
 
+    def test_inline_yaml_lists_preserved_on_add_and_remove(self) -> None:
+        inline_content = (
+            "---\n"
+            "id: personal-01-preferences\n"
+            "title: Inline List Preferences\n"
+            "severity_default: WARN\n"
+            'applies_to: ["**/*.py", "**/*.ts"]\n'
+            "tags: [preferences, workflow]\n"
+            "---\n\n"
+            "# Personal & Team Engineering Preferences\n\n"
+            "## 1. General Workflow Preferences\n"
+            "- Existing preference item.\n"
+        )
+        self.rule_file.write_text(inline_content, encoding="utf-8")
+
+        meta, _, _ = parse_preferences_document(self.rule_file.read_text(encoding="utf-8"))
+        self.assertEqual(meta.get("applies_to"), ["**/*.py", "**/*.ts"])
+        self.assertEqual(meta.get("tags"), ["preferences", "workflow"])
+
+        ok, _ = add_preference(
+            rule_text="New preference item",
+            section="1. General Workflow Preferences",
+            rule_file=self.rule_file,
+            root_dir=self.root_dir,
+        )
+        self.assertTrue(ok)
+
+        meta_after, _, _ = parse_preferences_document(self.rule_file.read_text(encoding="utf-8"))
+        self.assertEqual(meta_after.get("applies_to"), ["**/*.py", "**/*.ts"])
+        self.assertEqual(meta_after.get("tags"), ["preferences", "workflow"])
+
     def test_add_preference_success(self) -> None:
         success, msg = add_preference(
             rule_text="Always use strict typing for public interfaces",
