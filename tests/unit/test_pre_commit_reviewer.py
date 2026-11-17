@@ -325,11 +325,21 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
 
     def test_log_audit_entry(self) -> None:
         audit_file = Path(self.temp_dir.name) / "test_audit.log"
-        log_audit_entry("PASSED", commit_hash="abcdef123456", audit_file=audit_file)
+        log_audit_entry(
+            "PASSED",
+            commit_hash="abcdef123456",
+            audit_file=audit_file,
+            eval_path="stage1_fast_pass(gemini-decision-1)",
+            latency_ms=184.5,
+            stage_details="dep_scan=12ms, stage1=170ms",
+        )
         self.assertTrue(audit_file.exists())
         content = audit_file.read_text(encoding="utf-8")
         self.assertIn("commit: abcdef123456", content)
         self.assertIn("decision: PASSED", content)
+        self.assertIn("path: stage1_fast_pass(gemini-decision-1)", content)
+        self.assertIn("latency_ms: 184.5", content)
+        self.assertIn("dep_scan=12ms, stage1=170ms", content)
 
     @patch("scripts.pre_commit_reviewer.is_git_rebasing", return_value=False)
     @patch("scripts.pre_commit_reviewer.GeminiReviewClient")
@@ -363,6 +373,44 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
         content = audit_file.read_text(encoding="utf-8")
         self.assertIn("decision: PASSED", content)
         self.assertIn("commit: ", content)
+
+    @patch("scripts.pre_commit_reviewer.run_local_static_fallback", return_value=True)
+    @patch("scripts.pre_commit_reviewer.is_git_rebasing", return_value=False)
+    @patch("scripts.pre_commit_reviewer.GeminiReviewClient")
+    @patch("scripts.pre_commit_reviewer.load_rules")
+    @patch("scripts.pre_commit_reviewer.get_staged_diff")
+    @patch("scripts.pre_commit_reviewer.get_staged_files")
+    def test_run_review_degraded_no_auth_logs_skipped(
+        self, mock_files, mock_diff, mock_load, mock_client_cls, mock_rebasing, mock_fallback
+    ) -> None:
+        audit_file = Path(self.temp_dir.name) / "degraded_audit.log"
+        mock_files.return_value = ["src/main.py"]
+        mock_diff.return_value = "+ def hello(): pass"
+        rule = Rule(
+            id="rule-code-quality",
+            title="Code Quality",
+            severity_default="WARN",
+            applies_to=["**/*.py"],
+            content="Write typed code.",
+        )
+        mock_load.return_value = [rule]
+        mock_instance = MagicMock()
+        mock_instance.review_diff.return_value = ReviewResult(
+            passed=True,
+            summary="Authentication skipped: Google ADC access token not found.",
+            violations=[],
+            degraded=True,
+            evaluation_path="skipped(no_auth)",
+            total_latency_ms=3.2,
+        )
+        mock_client_cls.return_value = mock_instance
+
+        exit_code = run_review(audit_file=audit_file)
+        self.assertEqual(exit_code, 0)
+        content = audit_file.read_text(encoding="utf-8")
+        self.assertIn("decision: SKIPPED (NO_AUTH)", content)
+        self.assertIn("path: skipped(no_auth)", content)
+        self.assertNotIn("decision: PASSED", content)
 
     @patch("urllib.request.urlopen")
     def test_check_rule_collision_detects_conflict(self, mock_urlopen) -> None:

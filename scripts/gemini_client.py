@@ -193,6 +193,10 @@ class ReviewResult:
     violations: list[ReviewViolation] = field(default_factory=list)
     cached: bool = False
     degraded: bool = False
+    evaluation_path: str = "generative_only"
+    stage1_latency_ms: float | None = None
+    stage2_latency_ms: float | None = None
+    total_latency_ms: float | None = None
 
 
 @dataclass
@@ -436,11 +440,13 @@ class GeminiReviewClient:
             if cache_file.exists():
                 data = json.loads(cache_file.read_text(encoding="utf-8"))
                 violations = [ReviewViolation(**v) for v in data.get("violations", [])]
+                orig_path = str(data.get("evaluation_path", "cache_hit"))
                 return ReviewResult(
                     passed=bool(data.get("passed", True)),
                     summary=str(data.get("summary", "Cached review")),
                     violations=violations,
                     cached=True,
+                    evaluation_path=f"cache_hit({orig_path})" if orig_path != "cache_hit" else "cache_hit",
                 )
         except Exception:
             pass
@@ -453,6 +459,7 @@ class GeminiReviewClient:
             data = {
                 "passed": result.passed,
                 "summary": result.summary,
+                "evaluation_path": result.evaluation_path,
                 "violations": [asdict(v) for v in result.violations],
             }
             cache_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -975,17 +982,21 @@ class GeminiReviewClient:
         matched_rules: Sequence[Rule] | None = None,
     ) -> ReviewResult:
         """Evaluate staged diff against rules using System 1 (`gemini-decision-1`) + System 2 (`gemini-3.8-flash`) hybrid pipeline."""
+        review_t0 = time.perf_counter()
         if not diff_text.strip():
             return ReviewResult(
                 passed=True,
                 summary="No staged diff to review.",
                 violations=[],
+                evaluation_path="empty_diff",
+                total_latency_ms=0.0,
             )
 
         clean_dep_context = dependency_context.strip()
         cache_key = self._compute_cache_key(diff_text, rules_text, clean_dep_context)
         cached = self._get_cached_result(cache_key)
         if cached is not None:
+            cached.total_latency_ms = round((time.perf_counter() - review_t0) * 1000, 1)
             return cached
 
         token, err = self._resolve_auth()
@@ -995,10 +1006,16 @@ class GeminiReviewClient:
                 summary=err,
                 violations=[],
                 degraded=True,
+                evaluation_path="skipped(no_auth)",
+                total_latency_ms=round((time.perf_counter() - review_t0) * 1000, 1),
             )
+
+        stage1_ms: float | None = None
+        stage1_fallback_reason: str | None = None
 
         # Stage 1 (System 1): Parallel Discriminative Gate via `gemini-decision-1`
         if matched_rules and self.config.review_mode in ("hybrid", "decision_only"):
+            s1_t0 = time.perf_counter()
             flagged_evals, decision_failed = self.evaluate_rules_decision(
                 diff_text=diff_text,
                 matched_rules=matched_rules,
@@ -1006,6 +1023,7 @@ class GeminiReviewClient:
                 dependency_context=clean_dep_context,
                 token=token,
             )
+            stage1_ms = round((time.perf_counter() - s1_t0) * 1000, 1)
 
             if not decision_failed:
                 # Fast Path 1: Zero violations detected across all matched rules (~150-250ms)
@@ -1014,6 +1032,9 @@ class GeminiReviewClient:
                         passed=True,
                         summary=f"All {len(matched_rules)} rule(s) passed via {self.config.decision_model}.",
                         violations=[],
+                        evaluation_path=f"stage1_fast_pass({self.config.decision_model})",
+                        stage1_latency_ms=stage1_ms,
+                        total_latency_ms=round((time.perf_counter() - review_t0) * 1000, 1),
                     )
                     self._save_cached_result(cache_key, fast_pass)
                     return fast_pass
@@ -1027,6 +1048,11 @@ class GeminiReviewClient:
                     decision_violations = self._build_decision_only_violations(
                         flagged_evals, staged_files=staged_files
                     )
+                    path_label = (
+                        f"stage1_decision_only({self.config.decision_model})"
+                        if self.config.review_mode == "decision_only"
+                        else f"stage1_advisory_pass({self.config.decision_model})"
+                    )
                     result = ReviewResult(
                         passed=not has_hard_violation,
                         summary=(
@@ -1034,12 +1060,16 @@ class GeminiReviewClient:
                             f"{len(decision_violations)} violation(s) flagged."
                         ),
                         violations=decision_violations,
+                        evaluation_path=path_label,
+                        stage1_latency_ms=stage1_ms,
+                        total_latency_ms=round((time.perf_counter() - review_t0) * 1000, 1),
                     )
                     self._save_cached_result(cache_key, result)
                     return result
 
                 # Stage 2 (System 2) Escalation: Hard violation(s) detected in hybrid mode.
                 # Call `gemini-3.8-flash` scoped strictly to the violated rules to generate code diffs & fixes.
+                s2_t0 = time.perf_counter()
                 stage2_result = self._generate_remediation_with_flash(
                     diff_text=diff_text,
                     rules_text=rules_text,
@@ -1048,7 +1078,16 @@ class GeminiReviewClient:
                     token=token,
                     flagged_evals=flagged_evals,
                 )
+                s2_ms = round((time.perf_counter() - s2_t0) * 1000, 1)
                 if stage2_result is not None and stage2_result.violations:
+                    stage2_result.evaluation_path = (
+                        f"hybrid_escalated({self.config.decision_model}->{self.config.model})"
+                    )
+                    stage2_result.stage1_latency_ms = stage1_ms
+                    stage2_result.stage2_latency_ms = s2_ms
+                    stage2_result.total_latency_ms = round(
+                        (time.perf_counter() - review_t0) * 1000, 1
+                    )
                     self._save_cached_result(cache_key, stage2_result)
                     return stage2_result
 
@@ -1063,19 +1102,39 @@ class GeminiReviewClient:
                         f"({len(fallback_violations)} violation(s) detected)."
                     ),
                     violations=fallback_violations,
+                    evaluation_path=(
+                        f"stage1_fallback_after_stage2_error({self.config.decision_model})"
+                    ),
+                    stage1_latency_ms=stage1_ms,
+                    stage2_latency_ms=s2_ms,
+                    total_latency_ms=round((time.perf_counter() - review_t0) * 1000, 1),
                 )
                 self._save_cached_result(cache_key, fallback_result)
                 return fallback_result
 
             if self.config.review_mode == "decision_only":
+                eval_label = (
+                    f"skipped(no_auth:{self.config.decision_model})"
+                    if not self.config.api_key
+                    else f"skipped(stage1_error:{self.config.decision_model})"
+                )
                 return ReviewResult(
                     passed=True,
                     summary=f"Review skipped: {self.config.decision_model} call failed. Graceful fallback enabled.",
                     violations=[],
                     degraded=True,
+                    evaluation_path=eval_label,
+                    stage1_latency_ms=stage1_ms,
+                    total_latency_ms=round((time.perf_counter() - review_t0) * 1000, 1),
                 )
+            stage1_fallback_reason = (
+                "skipped_stage1_no_api_key_or_scope"
+                if not self.config.api_key
+                else "skipped_stage1_error"
+            )
 
-        # Standard Generative Path (`generative_only` or fallback when `matched_rules` not supplied)
+        # Standard Generative Path (`generative_only` or fallback when `matched_rules` not supplied or Stage 1 failed)
+        s2_t0 = time.perf_counter()
         gen_result = self._generate_remediation_with_flash(
             diff_text=diff_text,
             rules_text=rules_text,
@@ -1084,7 +1143,17 @@ class GeminiReviewClient:
             token=token,
             flagged_evals=None,
         )
+        s2_ms = round((time.perf_counter() - s2_t0) * 1000, 1)
         if gen_result is not None:
+            if stage1_fallback_reason:
+                gen_result.evaluation_path = (
+                    f"stage2_fallback({stage1_fallback_reason}->{self.config.model})"
+                )
+            else:
+                gen_result.evaluation_path = f"generative_only({self.config.model})"
+            gen_result.stage1_latency_ms = stage1_ms
+            gen_result.stage2_latency_ms = s2_ms
+            gen_result.total_latency_ms = round((time.perf_counter() - review_t0) * 1000, 1)
             self._save_cached_result(cache_key, gen_result)
             return gen_result
 
@@ -1093,4 +1162,8 @@ class GeminiReviewClient:
             summary="Review skipped: API call encountered an error. Graceful fallback enabled.",
             violations=[],
             degraded=True,
+            evaluation_path=f"skipped(api_error:{self.config.model})",
+            stage1_latency_ms=stage1_ms,
+            stage2_latency_ms=s2_ms,
+            total_latency_ms=round((time.perf_counter() - review_t0) * 1000, 1),
         )

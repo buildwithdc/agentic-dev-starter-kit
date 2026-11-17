@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
@@ -124,14 +125,28 @@ def log_audit_entry(
     decision: str,
     commit_hash: str | None = None,
     audit_file: Path | str = DEFAULT_AUDIT_LOG_PATH,
+    eval_path: str | None = None,
+    latency_ms: float | None = None,
+    stage_details: str | None = None,
 ) -> None:
-    """Record a brief audit entry with timestamp, commit hash, and final decision."""
+    """Record a brief audit entry with timestamp, commit hash, final decision, evaluation path, and latency."""
     try:
         path = Path(audit_file)
         path.parent.mkdir(parents=True, exist_ok=True)
         resolved_commit = commit_hash or get_current_commit_hash()
         timestamp = datetime.now(timezone.utc).isoformat()
-        entry = f"{timestamp} | commit: {resolved_commit} | decision: {decision}\n"
+        parts = [
+            timestamp,
+            f"commit: {resolved_commit}",
+            f"decision: {decision}",
+        ]
+        if eval_path:
+            parts.append(f"path: {eval_path}")
+        if latency_ms is not None:
+            parts.append(f"latency_ms: {latency_ms:.1f}")
+        if stage_details:
+            parts.append(stage_details)
+        entry = " | ".join(parts) + "\n"
         with path.open("a", encoding="utf-8") as f:
             f.write(entry)
     except Exception:
@@ -167,9 +182,28 @@ def format_violation(v: ReviewViolation) -> str:
     return "\n".join(out)
 
 
+def _format_stage_timings(
+    result: ReviewResult,
+    dep_ms: float | None = None,
+) -> str:
+    """Format compact stage timing breakdown string."""
+    segments: list[str] = []
+    if dep_ms is not None:
+        segments.append(f"dep_scan={dep_ms:.0f}ms")
+    if result.stage1_latency_ms is not None:
+        segments.append(f"stage1={result.stage1_latency_ms:.0f}ms")
+    if result.stage2_latency_ms is not None:
+        segments.append(f"stage2={result.stage2_latency_ms:.0f}ms")
+    if result.total_latency_ms is not None and not segments:
+        segments.append(f"llm={result.total_latency_ms:.0f}ms")
+    return ", ".join(segments)
+
+
 def print_review_report(
     result: ReviewResult,
     dep_context: DependencyContext | None = None,
+    e2e_latency_ms: float | None = None,
+    dep_ms: float | None = None,
 ) -> None:
     """Render structured diagnostic output."""
     print(f"\n{BOLD}{CYAN}=== Pre-Commit LLM Best-Practices Review ==={RESET}")
@@ -191,6 +225,12 @@ def print_review_report(
                 f"{YELLOW}⚠️  Note: Related neighbor file(s) have unstaged working-tree edits: "
                 f"{', '.join(dep_context.unstaged_neighbor_files)}{RESET}"
             )
+
+    timing_breakdown = _format_stage_timings(result, dep_ms=dep_ms)
+    if e2e_latency_ms is not None or result.evaluation_path:
+        e2e_str = f" | e2e={e2e_latency_ms:.0f}ms" if e2e_latency_ms is not None else ""
+        detail_str = f" ({timing_breakdown})" if timing_breakdown else ""
+        print(f"{CYAN}⚡ Eval Path: {result.evaluation_path}{e2e_str}{detail_str}{RESET}")
 
     if result.degraded:
         print(f"{YELLOW}[NOTICE: {result.summary}]{RESET}")
@@ -234,16 +274,28 @@ def run_review(
     root_dir: Path | str = ".",
 ) -> int:
     """Execute pre-commit review workflow."""
+    e2e_t0 = time.perf_counter()
+
     # 1. Check bypass flag
     if skip_llm or os.getenv("SKIP_LLM_HOOK") == "1":
         print(f"{CYAN}Pre-commit review skipped via SKIP_LLM_HOOK.{RESET}")
-        log_audit_entry("SKIPPED (BYPASS)", audit_file=audit_file)
+        log_audit_entry(
+            "SKIPPED (BYPASS)",
+            audit_file=audit_file,
+            eval_path="bypass",
+            latency_ms=(time.perf_counter() - e2e_t0) * 1000,
+        )
         return 0
 
     # 2. Check rebase status
     if is_git_rebasing():
         print(f"{CYAN}Git rebase/cherry-pick detected. Fast-tracking pre-commit review.{RESET}")
-        log_audit_entry("SKIPPED (REBASE)", audit_file=audit_file)
+        log_audit_entry(
+            "SKIPPED (REBASE)",
+            audit_file=audit_file,
+            eval_path="rebase",
+            latency_ms=(time.perf_counter() - e2e_t0) * 1000,
+        )
         return 0
 
     # 3. Get staged files
@@ -264,6 +316,7 @@ def run_review(
         pass
 
     # 5. Scan local code dependencies (N degrees upstream & downstream)
+    dep_t0 = time.perf_counter()
     dep_context = scan_dependencies(
         staged_files=staged_files,
         diff_text=diff_text,
@@ -271,6 +324,7 @@ def run_review(
         max_depth=dep_depth,
         max_chars=max_dep_chars,
     )
+    dep_ms = (time.perf_counter() - dep_t0) * 1000
 
     # Load rules across 3-tier hierarchy (Org, Team, Personal)
     load_dotenv(root_dir)
@@ -281,14 +335,24 @@ def run_review(
             f"{YELLOW}⚠️  No organizational or team rules found in {rules_dir}. "
             f"Run 'agentic-dev sync' (with ORG_RULES_SYNC_URL in .env) or add team rules to {rules_dir}/team/.{RESET}"
         )
-        log_audit_entry("PASSED (NO_RULES)", audit_file=audit_file)
+        log_audit_entry(
+            "SKIPPED (NO_RULES)",
+            audit_file=audit_file,
+            eval_path="skipped(no_rules)",
+            latency_ms=(time.perf_counter() - e2e_t0) * 1000,
+        )
         return 0
 
     candidate_files_for_rules = list(dict.fromkeys([*staged_files, *dep_context.touched_files()]))
     matched_rules = match_rules_for_files(all_rules, candidate_files_for_rules)
     if not matched_rules:
         # No applicable rules for changed files
-        log_audit_entry("PASSED (NO_MATCHED_RULES)", audit_file=audit_file)
+        log_audit_entry(
+            "SKIPPED (NO_MATCHED_RULES)",
+            audit_file=audit_file,
+            eval_path="skipped(no_matched_rules)",
+            latency_ms=(time.perf_counter() - e2e_t0) * 1000,
+        )
         return 0
 
     rules_summary = "\n\n".join(
@@ -306,12 +370,31 @@ def run_review(
         matched_rules=matched_rules,
     )
 
+    e2e_ms = (time.perf_counter() - e2e_t0) * 1000
+    stage_details = _format_stage_timings(result, dep_ms=dep_ms)
+
     # 7. Print report
-    print_review_report(result, dep_context=dep_context)
+    print_review_report(
+        result,
+        dep_context=dep_context,
+        e2e_latency_ms=e2e_ms,
+        dep_ms=dep_ms,
+    )
 
     if result.degraded:
         run_local_static_fallback()
-        log_audit_entry("PASSED (DEGRADED)", audit_file=audit_file)
+        degraded_decision = (
+            "SKIPPED (NO_AUTH)"
+            if "no_auth" in (result.evaluation_path or "")
+            else "SKIPPED (DEGRADED)"
+        )
+        log_audit_entry(
+            degraded_decision,
+            audit_file=audit_file,
+            eval_path=result.evaluation_path,
+            latency_ms=e2e_ms,
+            stage_details=stage_details,
+        )
         return 0
 
     # Two-Tier Gating Policy:
@@ -325,10 +408,22 @@ def run_review(
         print(
             f"\n{RED}Please resolve the critical/error violations above, stage your changes, and re-commit.{RESET}\n"
         )
-        log_audit_entry("BLOCKED", audit_file=audit_file)
+        log_audit_entry(
+            "BLOCKED",
+            audit_file=audit_file,
+            eval_path=result.evaluation_path,
+            latency_ms=e2e_ms,
+            stage_details=stage_details,
+        )
         return 1
 
-    log_audit_entry("PASSED", audit_file=audit_file)
+    log_audit_entry(
+        "PASSED",
+        audit_file=audit_file,
+        eval_path=result.evaluation_path,
+        latency_ms=e2e_ms,
+        stage_details=stage_details,
+    )
     return 0
 
 
