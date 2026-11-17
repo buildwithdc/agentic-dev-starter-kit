@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -562,6 +563,146 @@ class GeminiReviewClient:
 
         return url, headers, payload
 
+    def _evaluate_rules_vertex_fast_decision(
+        self,
+        diff_text: str,
+        matched_rules: Sequence[Rule],
+        staged_files: Sequence[str] | None = None,
+        dependency_context: str = "",
+        token: str | None = None,
+    ) -> tuple[list[DecisionRuleEvaluation], bool]:
+        """Stage 1 Vertex AI ADC Fast Decision Mode (`thinkingBudget=0` + closed enum schema, 0 prose)."""
+        if not matched_rules or not token:
+            return [], True
+
+        clean_dep = dependency_context.strip()
+        dep_section = (
+            f"\n\n### LOCAL DEPENDENCY CONTEXT (UPSTREAM & DOWNSTREAM):\n{clean_dep}"
+            if clean_dep
+            else ""
+        )
+        rules_block = "\n\n".join(
+            f"--- Rule ID: {r.id} ({r.title}) [Tier: {r.tier.upper()}] [Default Severity: {r.severity_default}] ---\n{r.content}"
+            for r in matched_rules
+        )
+
+        prompt = (
+            "You are a fast discriminative code compliance classifier. Evaluate whether the staged git diff "
+            "violates each rule below. Output ONLY the enum classification for each rule ID:\n"
+            "- 'COMPLIANT': Diff complies with the rule or rule is not applicable.\n"
+            "- 'INFO': Minor informational note.\n"
+            "- 'WARN': Non-blocking advisory deviation.\n"
+            "- 'ERROR': Broken typed contract, broken downstream caller, cyclic dependency, or missing mock warning.\n"
+            "- 'CRITICAL': Hardcoded secret/API key/credential exposure or direct main branch protection bypass.\n\n"
+            "Use LOCAL DEPENDENCY CONTEXT strictly to detect relational contract breakage introduced by the diff; "
+            "never flag pre-existing issues in untouched neighbor files.\n\n"
+            f"### RULES:\n{rules_block}\n\n"
+            f"### STAGED FILES:\n{json.dumps(list(staged_files or []))}\n\n"
+            f"### STAGED DIFF:\n{diff_text}{dep_section}"
+        )
+
+        schema_props: dict[str, Any] = {
+            r.id: {
+                "type": "STRING",
+                "enum": ["COMPLIANT", "INFO", "WARN", "ERROR", "CRITICAL"],
+            }
+            for r in matched_rules
+        }
+        decision_schema: dict[str, Any] = {
+            "type": "OBJECT",
+            "properties": schema_props,
+            "required": [r.id for r in matched_rules],
+        }
+
+        vertex_decision_model = (
+            "gemini-2.5-flash"
+            if self.config.decision_model == DEFAULT_DECISION_MODEL
+            else self.config.decision_model
+        )
+        location = self.config.location or DEFAULT_LOCATION
+        project_id = self.config.project_id or "default"
+        if location == "global":
+            url = VERTEX_GLOBAL_ENDPOINT_TEMPLATE.format(
+                project_id=project_id,
+                model=vertex_decision_model,
+            )
+        else:
+            url = VERTEX_ENDPOINT_TEMPLATE.format(
+                location=location,
+                project_id=project_id,
+                model=vertex_decision_model,
+            )
+
+        payload: dict[str, Any] = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "response_mime_type": "application/json",
+                "response_schema": decision_schema,
+                "temperature": 0.0,
+                "thinkingConfig": {"thinkingBudget": 0},
+                "responseLogprobs": True,
+            },
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        }
+
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
+                resp_data = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return [], True
+
+        try:
+            candidate = resp_data.get("candidates", [{}])[0]
+            text = (
+                candidate.get("content", {})
+                .get("parts", [{}])[0]
+                .get("text", "{}")
+            )
+            decisions_map = json.loads(text)
+            avg_logprobs = candidate.get("avgLogprobs")
+            calibrated_conf = (
+                round(max(0.50, min(0.99, math.exp(float(avg_logprobs)))), 4)
+                if avg_logprobs is not None
+                else 0.92
+            )
+        except Exception:
+            return [], True
+
+        score_map = {"INFO": 1.0, "WARN": 2.0, "ERROR": 3.0, "CRITICAL": 4.0}
+        flagged: list[DecisionRuleEvaluation] = []
+        for rule in matched_rules:
+            verdict = str(decisions_map.get(rule.id, "COMPLIANT")).upper()
+            if verdict in ("INFO", "WARN", "ERROR", "CRITICAL"):
+                detected_severity = verdict
+                if (
+                    rule.tier.lower() == "org"
+                    and rule.severity_default.upper() in ("CRITICAL", "ERROR")
+                    and SEVERITY_PRIORITY.get(detected_severity, 1)
+                    < SEVERITY_PRIORITY.get(rule.severity_default.upper(), 2)
+                ):
+                    detected_severity = rule.severity_default.upper()
+
+                flagged.append(
+                    DecisionRuleEvaluation(
+                        rule=rule,
+                        severity=detected_severity,
+                        violation_probability=calibrated_conf,
+                        confidence=calibrated_conf,
+                        expected_score=score_map.get(detected_severity, 2.0),
+                    )
+                )
+
+        return flagged, False
+
     def evaluate_rules_decision(
         self,
         diff_text: str,
@@ -570,12 +711,24 @@ class GeminiReviewClient:
         dependency_context: str = "",
         token: str | None = None,
     ) -> tuple[list[DecisionRuleEvaluation], bool]:
-        """Stage 1 (System 1): Evaluate matched rules in parallel via `gemini-decision-1`.
+        """Stage 1 (System 1): Evaluate matched rules in parallel via `gemini-decision-1` (or Vertex AI ADC fast decision mode).
 
         Returns `(flagged_evaluations, degraded_or_failed)`.
         """
         if not matched_rules:
             return [], False
+
+        # When running on Vertex AI with Google Cloud ADC (and no Google AI Studio API key),
+        # use the Vertex AI Fast Decision pass (`thinkingBudget=0` + closed enum schema) directly
+        # instead of failing with 403 on `generativelanguage.googleapis.com/v1beta/decisions`.
+        if self.config.backend == "vertex" and not self.config.api_key and token:
+            return self._evaluate_rules_vertex_fast_decision(
+                diff_text=diff_text,
+                matched_rules=matched_rules,
+                staged_files=staged_files,
+                dependency_context=dependency_context,
+                token=token,
+            )
 
         clean_dep = dependency_context.strip()
         dep_section = (
