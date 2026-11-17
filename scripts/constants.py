@@ -97,9 +97,9 @@ ENV_REVIEW_MODE = "GEMINI_REVIEW_MODE"
 ENV_DECISION_THRESHOLD = "GEMINI_DECISION_THRESHOLD"
 
 DEFAULT_DECISION_MODEL = "gemini-decision-1"
-DEFAULT_REVIEW_MODE = "hybrid"
+DEFAULT_REVIEW_MODE = "decision_only"
 DEFAULT_DECISION_THRESHOLD = 0.65
-VALID_REVIEW_MODES: tuple[str, ...] = ("hybrid", "decision_only", "generative_only")
+VALID_REVIEW_MODES: tuple[str, ...] = ("decision_only", "hybrid", "generative_only")
 
 
 def get_rule_path(tier: str, rule_filename: str, root_dir: Path | None = None) -> Path:

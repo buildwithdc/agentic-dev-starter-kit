@@ -766,6 +766,55 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
         self.assertEqual(len(res.conflicts), 0)
         self.assertEqual(mock_urlopen.call_count, 1)
 
+    @patch("urllib.request.urlopen")
+    def test_default_review_mode_is_decision_only_no_explain(self, mock_urlopen) -> None:
+        """By default (decision_only), even CRITICAL violations return immediately from Stage 1 without calling Stage 2."""
+        cfg = GeminiClientConfig()
+        self.assertEqual(cfg.review_mode, "decision_only")
+
+        decision_resp = MagicMock()
+        decision_resp.read.return_value = json.dumps(
+            {
+                "answers": {
+                    "org-02-security-and-secrets": {
+                        "type": "score",
+                        "score": 3.9,
+                        "probabilities": {"0": 0.01, "1": 0.0, "2": 0.0, "3": 0.09, "4": 0.90},
+                        "confidence": 0.95,
+                    }
+                }
+            }
+        ).encode("utf-8")
+        decision_resp.__enter__.return_value = decision_resp
+        mock_urlopen.return_value = decision_resp
+
+        org_rule = Rule(
+            id="org-02-security-and-secrets",
+            title="Security Policy & Secret Sanitization",
+            severity_default="CRITICAL",
+            tier="org",
+            applies_to=["**/*"],
+            content="- Plaintext API tokens are strictly prohibited.",
+        )
+
+        client = GeminiReviewClient(
+            config=GeminiClientConfig(backend="google_ai", api_key="test-key"),
+            cache_dir=self.cache_dir,
+        )
+        res = client.review_diff(
+            diff_text="+ API_SECRET = 'sk-live-123'",
+            rules_text="all rules text",
+            staged_files=["config.py"],
+            matched_rules=[org_rule],
+        )
+
+        self.assertFalse(res.passed)
+        self.assertEqual(len(res.violations), 1)
+        self.assertEqual(res.violations[0].severity, "CRITICAL")
+        self.assertEqual(res.evaluation_path, "stage1_decision_only(gemini-decision-1)")
+        # Only 1 HTTP call (Stage 1 decision model); Stage 2 generative explain is NOT called
+        self.assertEqual(mock_urlopen.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

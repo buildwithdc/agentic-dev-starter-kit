@@ -469,7 +469,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--review-mode",
         choices=list(VALID_REVIEW_MODES),
         default=None,
-        help=f"Review execution mode: 'hybrid' (default), 'decision_only', or 'generative_only' (default: {DEFAULT_REVIEW_MODE})",
+        help=(
+            f"Review execution mode: 'decision_only' (default, fast Stage 1 gate without LLM explanation), "
+            f"'hybrid' (escalate CRITICAL/ERROR to Stage 2 Flash), or 'generative_only' (default: {DEFAULT_REVIEW_MODE})"
+        ),
+    )
+    parser.add_argument(
+        "--explain",
+        action="store_true",
+        help="Escalate flagged violations to Stage 2 (gemini-3.8-flash) to generate detailed remediation explanations and code diffs (equivalent to --review-mode hybrid)",
     )
     parser.add_argument(
         "--audit-file",
@@ -510,6 +518,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         cfg.decision_model = args.decision_model
     if args.review_mode:
         cfg.review_mode = args.review_mode
+    elif args.explain:
+        cfg.review_mode = "hybrid"
 
     return run_review(
         rules_dir=args.rules_dir,
