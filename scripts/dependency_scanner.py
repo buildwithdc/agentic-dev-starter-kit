@@ -389,12 +389,23 @@ def read_repo_file(
     rel_path: str,
     root_dir: Path,
     staged_set: set[str],
+    unstaged_set: set[str] | None = None,
 ) -> str | None:
     """Read file content from Git index (for staged files) or HEAD (for untouched neighbors).
 
+    When `unstaged_set` is provided and the file has no unstaged working-tree edits,
+    reads directly from disk to avoid spawning O(N) `git show` subprocesses.
     Falls back to reading the file on disk when Git index/HEAD is unavailable (e.g. in isolated unit tests).
     """
     norm_path = rel_path.replace("\\", "/").lstrip("/")
+    disk_path = root_dir / norm_path
+
+    if unstaged_set is not None and norm_path not in unstaged_set and disk_path.is_file():
+        try:
+            return disk_path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+
     git_dir = root_dir / ".git"
     if git_dir.exists():
         ref = f":{norm_path}" if norm_path in staged_set else f"HEAD:{norm_path}"
@@ -411,7 +422,6 @@ def read_repo_file(
         except Exception:
             pass
 
-    disk_path = root_dir / norm_path
     if disk_path.is_file():
         try:
             return disk_path.read_text(encoding="utf-8")
@@ -1337,7 +1347,7 @@ def scan_dependencies(
 
     def get_source(rel_path: str) -> str | None:
         if rel_path not in source_cache:
-            source_cache[rel_path] = read_repo_file(rel_path, root, staged_set)
+            source_cache[rel_path] = read_repo_file(rel_path, root, staged_set, unstaged_set)
         return source_cache[rel_path]
 
     def get_analysis(rel_path: str) -> FileAnalysis | None:

@@ -89,16 +89,27 @@ def _parse_yaml_frontmatter(content: str) -> tuple[dict[str, object], str]:
             continue
 
         if ":" in line:
-            key, val = line.split(":", 1)
+            key, raw_val = line.split(":", 1)
             key = key.strip()
-            val = val.strip().strip("\"'")
+            raw_val = raw_val.strip()
             current_key = key
-            if not val:
+            if not raw_val:
                 current_list = []
                 metadata[key] = current_list
+            elif raw_val.startswith("[") and raw_val.endswith("]"):
+                current_list = None
+                inner = raw_val[1:-1].strip()
+                if not inner:
+                    metadata[key] = []
+                else:
+                    metadata[key] = [
+                        item.strip().strip("\"'")
+                        for item in inner.split(",")
+                        if item.strip()
+                    ]
             else:
                 current_list = None
-                metadata[key] = val
+                metadata[key] = raw_val.strip("\"'")
 
     return metadata, body
 

@@ -193,6 +193,54 @@ class TestDependencyScanner(unittest.TestCase):
         prompt_text = ctx.format_for_prompt()
         self.assertIn("WARNING: HAS UNSTAGED WORKING-TREE EDITS", prompt_text)
 
+    def test_clean_files_read_from_disk_without_git_show_subprocesses(self) -> None:
+        """Verifies clean tracked files are read directly from disk without spawning O(N) `git show` subprocesses."""
+        subprocess.run(["git", "init"], cwd=self.root, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=self.root, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=self.root, check=True, capture_output=True)
+
+        (self.root / "core.py").write_text("def compute(x: int) -> int:\n    return x + 1\n", encoding="utf-8")
+        (self.root / "clean_caller.py").write_text(
+            "from core import compute\n\ndef run() -> int:\n    return compute(10)\n",
+            encoding="utf-8",
+        )
+        (self.root / "unrelated.py").write_text("def helper() -> str:\n    return 'ok'\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=self.root, check=True, capture_output=True)
+
+        # Stage a change in core.py with no unstaged working-tree edits anywhere
+        (self.root / "core.py").write_text(
+            "def compute(x: int, factor: int = 1) -> int:\n    return (x + 1) * factor\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "core.py"], cwd=self.root, check=True)
+        diff_res = subprocess.run(
+            ["git", "diff", "--cached", "--unified=3"],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        real_run = subprocess.run
+        git_show_calls: list[list[str]] = []
+
+        def spy_run(cmd, *args, **kwargs):
+            if isinstance(cmd, list) and len(cmd) >= 2 and cmd[0] == "git" and cmd[1] == "show":
+                git_show_calls.append(cmd)
+            return real_run(cmd, *args, **kwargs)
+
+        with patch("scripts.dependency_scanner.subprocess.run", side_effect=spy_run):
+            ctx = scan_dependencies(
+                staged_files=["core.py"],
+                diff_text=diff_res.stdout,
+                root_dir=self.root,
+                max_depth=1,
+            )
+
+        self.assertIn("clean_caller.py", ctx.touched_files())
+        self.assertEqual(git_show_calls, [])
+
     def test_typescript_bidirectional_and_multiline_imports(self) -> None:
         (self.root / "src" / "types").mkdir(parents=True, exist_ok=True)
         (self.root / "src" / "services").mkdir(parents=True, exist_ok=True)

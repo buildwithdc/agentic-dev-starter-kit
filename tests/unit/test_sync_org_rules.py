@@ -73,6 +73,27 @@ class TestSyncOrgRules(unittest.TestCase):
         self.assertIsNotNone(age)
         self.assertGreater(age, 86400 * 7)
 
+    def test_is_sync_needed_backoff_vs_success_intervals(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        ts_file = get_timestamp_file(self.root_dir)
+        ts_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # 1. BACKOFF written 30 minutes ago (< 1h backoff) -> should NOT need sync, even if remote is configured
+        thirty_min_ago = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        ts_file.write_text(f"{thirty_min_ago} | BACKOFF\n", encoding="utf-8")
+        self.assertFalse(is_sync_needed(self.root_dir, interval_seconds=86400, has_remote_source=True))
+
+        # 2. BACKOFF written 2 hours ago (> 1h backoff, < 24h TTL) -> SHOULD need sync
+        two_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        ts_file.write_text(f"{two_hours_ago} | BACKOFF\n", encoding="utf-8")
+        self.assertTrue(is_sync_needed(self.root_dir, interval_seconds=86400, has_remote_source=True))
+
+        # 3. SUCCESS written 2 hours ago (< 24h TTL) -> should NOT need sync
+        (self.org_dir / "org-01.md").write_text("# Rule\n", encoding="utf-8")
+        ts_file.write_text(f"{two_hours_ago} | SUCCESS | org-01.md\n", encoding="utf-8")
+        self.assertFalse(is_sync_needed(self.root_dir, interval_seconds=86400, has_remote_source=True))
+
     def test_sync_org_rules_local_source(self) -> None:
         source_dir = self.root_dir / "central_rules"
         source_dir.mkdir(parents=True, exist_ok=True)
