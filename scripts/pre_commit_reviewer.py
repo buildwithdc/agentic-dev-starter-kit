@@ -186,14 +186,20 @@ def _format_stage_timings(
     result: ReviewResult,
     dep_ms: float | None = None,
 ) -> str:
-    """Format compact stage timing breakdown string."""
+    """Format compact stage timing and model breakdown string."""
     segments: list[str] = []
     if dep_ms is not None:
         segments.append(f"dep_scan={dep_ms:.0f}ms")
     if result.stage1_latency_ms is not None:
-        segments.append(f"stage1={result.stage1_latency_ms:.0f}ms")
+        s1_label = f"stage1[{result.stage1_model}]" if result.stage1_model else "stage1"
+        segments.append(f"{s1_label}={result.stage1_latency_ms:.0f}ms")
+    elif result.stage1_model:
+        segments.append(f"stage1_model={result.stage1_model}")
     if result.stage2_latency_ms is not None:
-        segments.append(f"stage2={result.stage2_latency_ms:.0f}ms")
+        s2_label = f"stage2[{result.stage2_model}]" if result.stage2_model else "stage2"
+        segments.append(f"{s2_label}={result.stage2_latency_ms:.0f}ms")
+    elif result.stage2_model:
+        segments.append(f"stage2_model={result.stage2_model}")
     if result.total_latency_ms is not None and not segments:
         segments.append(f"llm={result.total_latency_ms:.0f}ms")
     return ", ".join(segments)

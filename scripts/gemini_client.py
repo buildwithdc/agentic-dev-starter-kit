@@ -195,6 +195,8 @@ class ReviewResult:
     cached: bool = False
     degraded: bool = False
     evaluation_path: str = "generative_only"
+    stage1_model: str | None = None
+    stage2_model: str | None = None
     stage1_latency_ms: float | None = None
     stage2_latency_ms: float | None = None
     total_latency_ms: float | None = None
@@ -448,6 +450,8 @@ class GeminiReviewClient:
                     violations=violations,
                     cached=True,
                     evaluation_path=f"cache_hit({orig_path})" if orig_path != "cache_hit" else "cache_hit",
+                    stage1_model=data.get("stage1_model"),
+                    stage2_model=data.get("stage2_model"),
                 )
         except Exception:
             pass
@@ -461,6 +465,8 @@ class GeminiReviewClient:
                 "passed": result.passed,
                 "summary": result.summary,
                 "evaluation_path": result.evaluation_path,
+                "stage1_model": result.stage1_model,
+                "stage2_model": result.stage2_model,
                 "violations": [asdict(v) for v in result.violations],
             }
             cache_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -615,7 +621,7 @@ class GeminiReviewClient:
         }
 
         vertex_decision_model = (
-            "gemini-2.5-flash"
+            self.config.model
             if self.config.decision_model == DEFAULT_DECISION_MODEL
             else self.config.decision_model
         )
@@ -1165,6 +1171,15 @@ class GeminiReviewClient:
 
         stage1_ms: float | None = None
         stage1_fallback_reason: str | None = None
+        actual_stage1_model = (
+            self.config.model
+            if (
+                self.config.backend == "vertex"
+                and not self.config.api_key
+                and self.config.decision_model == DEFAULT_DECISION_MODEL
+            )
+            else self.config.decision_model
+        )
 
         # Stage 1 (System 1): Parallel Discriminative Gate via `gemini-decision-1`
         if matched_rules and self.config.review_mode in ("hybrid", "decision_only"):
@@ -1183,9 +1198,10 @@ class GeminiReviewClient:
                 if not flagged_evals:
                     fast_pass = ReviewResult(
                         passed=True,
-                        summary=f"All {len(matched_rules)} rule(s) passed via {self.config.decision_model}.",
+                        summary=f"All {len(matched_rules)} rule(s) passed via {actual_stage1_model}.",
                         violations=[],
-                        evaluation_path=f"stage1_fast_pass({self.config.decision_model})",
+                        evaluation_path=f"stage1_fast_pass({actual_stage1_model})",
+                        stage1_model=actual_stage1_model,
                         stage1_latency_ms=stage1_ms,
                         total_latency_ms=round((time.perf_counter() - review_t0) * 1000, 1),
                     )
@@ -1202,18 +1218,19 @@ class GeminiReviewClient:
                         flagged_evals, staged_files=staged_files
                     )
                     path_label = (
-                        f"stage1_decision_only({self.config.decision_model})"
+                        f"stage1_decision_only({actual_stage1_model})"
                         if self.config.review_mode == "decision_only"
-                        else f"stage1_advisory_pass({self.config.decision_model})"
+                        else f"stage1_advisory_pass({actual_stage1_model})"
                     )
                     result = ReviewResult(
                         passed=not has_hard_violation,
                         summary=(
-                            f"Evaluated {len(matched_rules)} rule(s) via {self.config.decision_model}: "
+                            f"Evaluated {len(matched_rules)} rule(s) via {actual_stage1_model}: "
                             f"{len(decision_violations)} violation(s) flagged."
                         ),
                         violations=decision_violations,
                         evaluation_path=path_label,
+                        stage1_model=actual_stage1_model,
                         stage1_latency_ms=stage1_ms,
                         total_latency_ms=round((time.perf_counter() - review_t0) * 1000, 1),
                     )
@@ -1234,8 +1251,10 @@ class GeminiReviewClient:
                 s2_ms = round((time.perf_counter() - s2_t0) * 1000, 1)
                 if stage2_result is not None and stage2_result.violations:
                     stage2_result.evaluation_path = (
-                        f"hybrid_escalated({self.config.decision_model}->{self.config.model})"
+                        f"hybrid_escalated({actual_stage1_model}->{self.config.model})"
                     )
+                    stage2_result.stage1_model = actual_stage1_model
+                    stage2_result.stage2_model = self.config.model
                     stage2_result.stage1_latency_ms = stage1_ms
                     stage2_result.stage2_latency_ms = s2_ms
                     stage2_result.total_latency_ms = round(
@@ -1251,13 +1270,15 @@ class GeminiReviewClient:
                 fallback_result = ReviewResult(
                     passed=False,
                     summary=(
-                        f"Commit blocked by {self.config.decision_model} "
+                        f"Commit blocked by {actual_stage1_model} "
                         f"({len(fallback_violations)} violation(s) detected)."
                     ),
                     violations=fallback_violations,
                     evaluation_path=(
-                        f"stage1_fallback_after_stage2_error({self.config.decision_model})"
+                        f"stage1_fallback_after_stage2_error({actual_stage1_model})"
                     ),
+                    stage1_model=actual_stage1_model,
+                    stage2_model=self.config.model,
                     stage1_latency_ms=stage1_ms,
                     stage2_latency_ms=s2_ms,
                     total_latency_ms=round((time.perf_counter() - review_t0) * 1000, 1),
@@ -1267,16 +1288,17 @@ class GeminiReviewClient:
 
             if self.config.review_mode == "decision_only":
                 eval_label = (
-                    f"skipped(no_auth:{self.config.decision_model})"
+                    f"skipped(no_auth:{actual_stage1_model})"
                     if not self.config.api_key
-                    else f"skipped(stage1_error:{self.config.decision_model})"
+                    else f"skipped(stage1_error:{actual_stage1_model})"
                 )
                 return ReviewResult(
                     passed=True,
-                    summary=f"Review skipped: {self.config.decision_model} call failed. Graceful fallback enabled.",
+                    summary=f"Review skipped: {actual_stage1_model} call failed. Graceful fallback enabled.",
                     violations=[],
                     degraded=True,
                     evaluation_path=eval_label,
+                    stage1_model=actual_stage1_model,
                     stage1_latency_ms=stage1_ms,
                     total_latency_ms=round((time.perf_counter() - review_t0) * 1000, 1),
                 )
@@ -1302,8 +1324,10 @@ class GeminiReviewClient:
                 gen_result.evaluation_path = (
                     f"stage2_fallback({stage1_fallback_reason}->{self.config.model})"
                 )
+                gen_result.stage1_model = actual_stage1_model
             else:
                 gen_result.evaluation_path = f"generative_only({self.config.model})"
+            gen_result.stage2_model = self.config.model
             gen_result.stage1_latency_ms = stage1_ms
             gen_result.stage2_latency_ms = s2_ms
             gen_result.total_latency_ms = round((time.perf_counter() - review_t0) * 1000, 1)
@@ -1316,6 +1340,8 @@ class GeminiReviewClient:
             violations=[],
             degraded=True,
             evaluation_path=f"skipped(api_error:{self.config.model})",
+            stage1_model=actual_stage1_model if stage1_ms is not None else None,
+            stage2_model=self.config.model,
             stage1_latency_ms=stage1_ms,
             stage2_latency_ms=s2_ms,
             total_latency_ms=round((time.perf_counter() - review_t0) * 1000, 1),
