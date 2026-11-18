@@ -51,7 +51,7 @@ ENV_PROJECT_ALT = "GCP_PROJECT"
 ENV_LOCATION = "GOOGLE_CLOUD_LOCATION"
 ENV_LOCATION_ALT = "GCP_REGION"
 ENV_TIMEOUT = "GEMINI_TIMEOUT"
-ENV_API_KEY = "GEMINI_API_KEY"
+ENV_API_KEY = "GOOGLE_AI_STUDIO_KEY"
 
 DEFAULT_BACKEND = "vertex"
 DEFAULT_MODEL = "gemini-3.8-flash"
@@ -61,6 +61,8 @@ DEFAULT_TIMEOUT = 30.0
 PLACEHOLDER_API_KEYS: frozenset[str] = frozenset(
     {
         "",
+        "your_google_ai_studio_key_here",
+        "your-google-ai-studio-key-here",
         "your_gemini_api_key_here",
         "your_api_key_here",
         "your-gemini-api-key-here",
@@ -480,8 +482,8 @@ class GeminiReviewClient:
             token = get_adc_access_token(self.cache_dir)
             if not token:
                 return None, (
-                    "Authentication skipped: Google ADC access token not found and GEMINI_API_KEY unset. "
-                    "Run 'gcloud auth application-default login' or export GEMINI_API_KEY to enable LLM checks."
+                    "Authentication skipped: Google ADC access token not found and GOOGLE_AI_STUDIO_KEY unset. "
+                    "Run 'gcloud auth application-default login' or export GOOGLE_AI_STUDIO_KEY to enable LLM checks."
                 )
 
         if self.config.backend == "vertex" and not self.config.project_id:

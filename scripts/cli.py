@@ -100,7 +100,7 @@ def run_doctor(argv: Sequence[str] | None = None) -> int:
         print(f"Config (.env): ✅ Found ({sync_note})")
     else:
         print(
-            "Config (.env): ⚠️  Missing .env (run `cp .env.example .env` to configure ORG_RULES_SYNC_URL / GEMINI_API_KEY)"
+            "Config (.env): ⚠️  Missing .env (run `cp .env.example .env` to configure ORG_RULES_SYNC_URL / GOOGLE_AI_STUDIO_KEY)"
         )
 
     rules_dir = root_dir / RULES_DIR_NAME
@@ -143,11 +143,11 @@ def run_doctor(argv: Sequence[str] | None = None) -> int:
         print(f"Review Mode:   Direct Gemini API (backend={cfg.backend}, model={cfg.model})")
 
     if has_api_key:
-        print("Auth Status:   ✅ GEMINI_API_KEY configured")
+        print("Auth Status:   ✅ GOOGLE_AI_STUDIO_KEY configured")
     elif has_adc:
         print("Auth Status:   ✅ Google Cloud ADC token available")
     else:
-        print("Auth Status:   ⚠️  No GEMINI_API_KEY or ADC token detected (offline fallback active)")
+        print("Auth Status:   ⚠️  No GOOGLE_AI_STUDIO_KEY or ADC token detected (offline fallback active)")
 
     return 0
 

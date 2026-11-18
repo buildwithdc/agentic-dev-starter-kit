@@ -276,7 +276,7 @@ Organizations maintain canonical Tier 1 rules in a dedicated central governance 
    - **Option B (Google AI Studio API Key)**:
      ```bash
      cp .env.example .env
-     # Edit .env and set GEMINI_API_KEY=your_key_here
+     # Edit .env and set GOOGLE_AI_STUDIO_KEY=your_key_here
      ```
 
 2. **Install Assistant Tooling & Git Hooks**:
