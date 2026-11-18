@@ -97,13 +97,13 @@ GOOGLE_AI_DECISIONS_ENDPOINT = (
     "https://generativelanguage.googleapis.com/v1beta/decisions"
 )
 
-DECISION_SEVERITY_CRITERIA: dict[str, str] = {
-    "0": "COMPLIANT: The staged diff fully complies with this rule or the rule is not applicable to the changes.",
-    "1": "INFO: Minor informational notice or non-critical observation.",
-    "2": "WARN: Advisory deviation from best practices that does not break contracts or security.",
-    "3": "ERROR: Clear violation of typed contracts, broken downstream callers, cyclic dependencies, or missing mock warnings.",
-    "4": "CRITICAL: Severe violation such as hardcoded secrets/credentials or direct main branch protection bypass.",
-}
+DECISION_SEVERITY_CRITERIA: list[str] = [
+    "COMPLIANT: The added or modified lines (+ prefix) in the staged diff comply with this specific rule, only delete (- prefix) old issues, or this rule is orthogonal/not applicable to the diff.",
+    "INFO: Minor informational notice specifically within the scope of this rule.",
+    "WARN: Non-blocking advisory deviation specifically within the scope of this rule.",
+    "ERROR: Substantive violation specifically within the scope of this rule (e.g., broken typed contract, broken downstream caller, cyclic dependency, or missing mock warning).",
+    "CRITICAL: Severe violation specifically within the scope of this rule (only applicable if this specific rule governs security/secrets or main branch protection).",
+]
 
 BUCKET_TO_SEVERITY: dict[str, str] = {
     "1": "INFO",
@@ -577,8 +577,8 @@ class GeminiReviewClient:
         dependency_context: str = "",
         token: str | None = None,
     ) -> tuple[list[DecisionRuleEvaluation], bool]:
-        """Stage 1 Vertex AI ADC Fast Decision Mode (`thinkingBudget=0` + closed enum schema, 0 prose)."""
-        if not matched_rules or not token:
+        """Stage 1 Fast Decision Mode (`thinkingBudget=0` + closed enum schema, 0 prose)."""
+        if not matched_rules or (not token and not self.config.api_key):
             return [], True
 
         clean_dep = dependency_context.strip()
@@ -620,24 +620,37 @@ class GeminiReviewClient:
             "required": [r.id for r in matched_rules],
         }
 
-        vertex_decision_model = (
+        fast_decision_model = (
             self.config.model
             if self.config.decision_model == DEFAULT_DECISION_MODEL
             else self.config.decision_model
         )
-        location = self.config.location or DEFAULT_LOCATION
-        project_id = self.config.project_id or "default"
-        if location == "global":
-            url = VERTEX_GLOBAL_ENDPOINT_TEMPLATE.format(
-                project_id=project_id,
-                model=vertex_decision_model,
-            )
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.config.backend == "vertex" and not self.config.api_key:
+            location = self.config.location or DEFAULT_LOCATION
+            project_id = self.config.project_id or "default"
+            if location == "global":
+                url = VERTEX_GLOBAL_ENDPOINT_TEMPLATE.format(
+                    project_id=project_id,
+                    model=fast_decision_model,
+                )
+            else:
+                url = VERTEX_ENDPOINT_TEMPLATE.format(
+                    location=location,
+                    project_id=project_id,
+                    model=fast_decision_model,
+                )
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
         else:
-            url = VERTEX_ENDPOINT_TEMPLATE.format(
-                location=location,
-                project_id=project_id,
-                model=vertex_decision_model,
-            )
+            if self.config.api_key:
+                url = f"{GOOGLE_AI_ENDPOINT_TEMPLATE.format(model=fast_decision_model)}?key={self.config.api_key}"
+            else:
+                url = GOOGLE_AI_ENDPOINT_TEMPLATE.format(model=fast_decision_model)
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                if self.config.project_id:
+                    headers["x-goog-user-project"] = self.config.project_id
 
         payload: dict[str, Any] = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -648,10 +661,6 @@ class GeminiReviewClient:
                 "thinkingConfig": {"thinkingBudget": 0},
                 "responseLogprobs": True,
             },
-        }
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
         }
 
         req = urllib.request.Request(
@@ -752,10 +761,11 @@ class GeminiReviewClient:
             questions[rule.id] = {
                 "type": "score",
                 "instructions": (
-                    f"Evaluate whether the staged git diff violates this {rule.tier.upper()} "
-                    f"best-practice rule ({rule.title}, Default Severity: {rule.severity_default}). "
-                    "Use LOCAL DEPENDENCY CONTEXT strictly to detect relational contract breakage or "
-                    "cyclic dependencies introduced by the diff; never flag pre-existing issues in "
+                    f"Evaluate ONLY whether the newly added/modified lines (+ prefix) in the staged git diff violate "
+                    f"THIS specific {rule.tier.upper()} best-practice rule ({rule.title}, Default Severity: {rule.severity_default}). "
+                    "Do NOT flag violations that belong to other unrelated rules, and treat deleted lines (- prefix) "
+                    "that remove bad code as COMPLIANT. Use LOCAL DEPENDENCY CONTEXT strictly to detect relational "
+                    "contract breakage or cyclic dependencies introduced by the diff; never flag pre-existing issues in "
                     f"untouched neighbor files.\n\nRule Specification:\n{rule.content}"
                 ),
                 "criteria": DECISION_SEVERITY_CRITERIA,
@@ -1286,22 +1296,6 @@ class GeminiReviewClient:
                 self._save_cached_result(cache_key, fallback_result)
                 return fallback_result
 
-            if self.config.review_mode == "decision_only":
-                eval_label = (
-                    f"skipped(no_auth:{actual_stage1_model})"
-                    if not self.config.api_key
-                    else f"skipped(stage1_error:{actual_stage1_model})"
-                )
-                return ReviewResult(
-                    passed=True,
-                    summary=f"Review skipped: {actual_stage1_model} call failed. Graceful fallback enabled.",
-                    violations=[],
-                    degraded=True,
-                    evaluation_path=eval_label,
-                    stage1_model=actual_stage1_model,
-                    stage1_latency_ms=stage1_ms,
-                    total_latency_ms=round((time.perf_counter() - review_t0) * 1000, 1),
-                )
             stage1_fallback_reason = (
                 "skipped_stage1_no_api_key_or_scope"
                 if not self.config.api_key

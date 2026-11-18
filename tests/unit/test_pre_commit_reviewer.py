@@ -814,6 +814,69 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
         self.assertEqual(res.evaluation_path, "stage1_decision_only(gemini-decision-1)")
         # Only 1 HTTP call (Stage 1 decision model); Stage 2 generative explain is NOT called
         self.assertEqual(mock_urlopen.call_count, 1)
+        req_body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+        self.assertIsInstance(
+            req_body["questions"]["org-02-security-and-secrets"]["criteria"], list
+        )
+
+    @patch("urllib.request.urlopen")
+    def test_decision_only_stage1_error_falls_back_to_generate_content(
+        self, mock_urlopen
+    ) -> None:
+        """If /v1beta/decisions fails (e.g. 403/404 for standard API key) in decision_only mode, fall back to :generateContent."""
+        flash_inner = json.dumps(
+            {
+                "passed": False,
+                "summary": "Hardcoded API secret detected.",
+                "violations": [
+                    {
+                        "file": "config.py",
+                        "line_number": 1,
+                        "rule_id": "org-02-security-and-secrets",
+                        "rule_title": "Security Policy & Secret Sanitization",
+                        "severity": "CRITICAL",
+                        "issue": "Plaintext API token assigned to API_SECRET.",
+                        "suggested_fix": "Load secret from environment variable.",
+                    }
+                ],
+            }
+        )
+        flash_resp = MagicMock()
+        flash_resp.read.return_value = json.dumps(
+            {"candidates": [{"content": {"parts": [{"text": flash_inner}]}}]}
+        ).encode("utf-8")
+        flash_resp.__enter__.return_value = flash_resp
+
+        mock_urlopen.side_effect = [OSError("403 Forbidden on /v1beta/decisions"), flash_resp]
+
+        org_rule = Rule(
+            id="org-02-security-and-secrets",
+            title="Security Policy & Secret Sanitization",
+            severity_default="CRITICAL",
+            tier="org",
+            applies_to=["**/*"],
+            content="- Plaintext API tokens are strictly prohibited.",
+        )
+
+        client = GeminiReviewClient(
+            config=GeminiClientConfig(
+                backend="google_ai", api_key="test-key", review_mode="decision_only"
+            ),
+            cache_dir=self.cache_dir,
+        )
+        res = client.review_diff(
+            diff_text="+ API_SECRET = 'sk-live-123'",
+            rules_text="all rules text",
+            staged_files=["config.py"],
+            matched_rules=[org_rule],
+        )
+
+        self.assertFalse(res.passed)
+        self.assertFalse(res.degraded)
+        self.assertEqual(len(res.violations), 1)
+        self.assertEqual(res.violations[0].severity, "CRITICAL")
+        self.assertIn("stage2_fallback(skipped_stage1_error->", res.evaluation_path)
+        self.assertEqual(mock_urlopen.call_count, 2)
 
 
 if __name__ == "__main__":
