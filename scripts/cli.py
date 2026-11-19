@@ -18,7 +18,7 @@ try:
     from scripts.auth_manager import main as auth_main
     from scripts.bundled_assets import bootstrap_workspace_templates
     from scripts.constants import APP_VERSION as __version__
-    from scripts.constants import RULES_DIR_NAME
+    from scripts.constants import RULES_DIR_NAME, ensure_utf8_stdio
     from scripts.gemini_client import GeminiClientConfig, get_adc_access_token
     from scripts.install_tooling import main as install_main
     from scripts.install_tooling import uninstall_global
@@ -39,7 +39,7 @@ except ImportError:
     from auth_manager import main as auth_main
     from bundled_assets import bootstrap_workspace_templates
     from constants import APP_VERSION as __version__
-    from constants import RULES_DIR_NAME
+    from constants import RULES_DIR_NAME, ensure_utf8_stdio
     from gemini_client import GeminiClientConfig, get_adc_access_token
     from install_tooling import main as install_main
     from install_tooling import uninstall_global
@@ -214,6 +214,7 @@ Run `agentic-dev <subcommand> --help` for subcommand-specific options."""
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Dispatch `agentic-dev` subcommands to the underlying module entrypoints."""
+    ensure_utf8_stdio()
     args_list = list(sys.argv[1:] if argv is None else argv)
 
     if not args_list or args_list[0] in ("-h", "--help", "help"):

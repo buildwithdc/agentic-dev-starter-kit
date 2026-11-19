@@ -22,12 +22,14 @@ try:
         PERSONAL_TIER_DIR_NAME,
         RULES_DIR_NAME,
         SYNC_TIMESTAMP_FILENAME,
+        ensure_utf8_stdio,
     )
 except ImportError:
     from constants import (
         PERSONAL_TIER_DIR_NAME,
         RULES_DIR_NAME,
         SYNC_TIMESTAMP_FILENAME,
+        ensure_utf8_stdio,
     )
 
 DEFAULT_OUTPUT_ZIP = "dist/dev-env-tooling.zip"
@@ -307,6 +309,7 @@ def extract_tooling(
 
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point for packaging and extracting portable dev tooling."""
+    ensure_utf8_stdio()
     parser = argparse.ArgumentParser(
         description="Portable Dev Environment Tooling Packager & Extractor",
     )

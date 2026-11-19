@@ -27,12 +27,20 @@ if str(SCRIPT_DIR) not in sys.path:
 
 try:
     from scripts.bundled_assets import ENV_FILENAME, merge_env_file
-    from scripts.constants import DEFAULT_CACHE_DIR_PATH, get_global_credentials_file
+    from scripts.constants import (
+        DEFAULT_CACHE_DIR_PATH,
+        ensure_utf8_stdio,
+        get_global_credentials_file,
+    )
     from scripts.gemini_client import ENV_API_KEY, get_adc_access_token, sanitize_api_key
     from scripts.sync_org_rules import parse_env_file
 except ImportError:
     from bundled_assets import ENV_FILENAME, merge_env_file
-    from constants import DEFAULT_CACHE_DIR_PATH, get_global_credentials_file
+    from constants import (
+        DEFAULT_CACHE_DIR_PATH,
+        ensure_utf8_stdio,
+        get_global_credentials_file,
+    )
     from gemini_client import ENV_API_KEY, get_adc_access_token, sanitize_api_key
     from sync_org_rules import parse_env_file
 
@@ -406,6 +414,7 @@ def _print_status(status: AuthStatus, as_json: bool = False) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint for `agentic-dev auth`."""
+    ensure_utf8_stdio()
     parser = _build_parser()
     args = parser.parse_args(argv)
     action = args.action or "status"

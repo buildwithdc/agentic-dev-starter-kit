@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 # ==============================================================================
@@ -132,4 +133,19 @@ def get_global_config_dir() -> Path:
 def get_global_credentials_file() -> Path:
     """Resolve the path to the user-global credentials dotenv file."""
     return get_global_config_dir() / GLOBAL_CREDENTIALS_FILENAME
+
+
+def ensure_utf8_stdio() -> None:
+    """Ensure stdout and stderr use UTF-8 encoding (prevents cp1252 crashes on Windows)."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            enc = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+            if enc != "utf8":
+                try:
+                    reconfigure(encoding="utf-8", errors="replace")
+                except Exception:
+                    pass
+
 

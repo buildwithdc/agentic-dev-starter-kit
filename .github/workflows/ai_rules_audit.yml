@@ -10,33 +10,51 @@ permissions:
   contents: read
   pull-requests: read
 
+env:
+  PYTHONUTF8: "1"
+
 jobs:
   governance-audit:
     name: Multi-Tier Rule Compliance & Security Audit
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
-      - name: Install uv and Dependencies
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install uv & Dependencies
+        uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Sync Environment
+        run: uv sync --group dev
 
       - name: Authoritative Org Rules Sync Verification
+        env:
+          ORG_RULES_SYNC_URL: ${{ vars.ORG_RULES_SYNC_URL || 'https://github.com/buildwithdc/sample-agentic-dev-governance-rules/releases/latest/download/rules-org.zip' }}
         run: |
-          python3 scripts/sync_org_rules.py --force
+          uv run python scripts/sync_org_rules.py --force --verbose
 
       - name: Run Multi-Tier Pre-Commit / PR Reviewer
         env:
           GOOGLE_AI_STUDIO_KEY: ${{ secrets.GOOGLE_AI_STUDIO_KEY }}
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
         run: |
-          python3 scripts/pre_commit_reviewer.py
+          if [ "$EVENT_NAME" = "pull_request" ] && [ -n "$BASE_REF" ]; then
+            git fetch origin "$BASE_REF" --depth=50 || true
+            DIFF_RANGE="origin/${BASE_REF}...HEAD"
+          elif [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            DIFF_RANGE="${BEFORE_SHA}..HEAD"
+          else
+            DIFF_RANGE="HEAD~1..HEAD"
+          fi
+          echo "Auditing diff range: $DIFF_RANGE"
+          uv run python scripts/pre_commit_reviewer.py --diff-range "$DIFF_RANGE" --explain

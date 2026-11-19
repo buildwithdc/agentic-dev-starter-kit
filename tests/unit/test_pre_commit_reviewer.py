@@ -878,6 +878,49 @@ class TestGeminiADCClientAndReviewer(unittest.TestCase):
         self.assertIn("stage2_fallback(skipped_stage1_error->", res.evaluation_path)
         self.assertEqual(mock_urlopen.call_count, 2)
 
+    @patch("scripts.pre_commit_reviewer.GeminiReviewClient")
+    @patch("scripts.pre_commit_reviewer.load_rules")
+    @patch("scripts.pre_commit_reviewer.get_range_diff")
+    @patch("scripts.pre_commit_reviewer.get_range_files")
+    @patch("scripts.pre_commit_reviewer.get_staged_files")
+    def test_run_review_with_diff_range(
+        self,
+        mock_staged_files,
+        mock_range_files,
+        mock_range_diff,
+        mock_load,
+        mock_client_cls,
+    ) -> None:
+        mock_range_files.return_value = ["scripts/cli.py"]
+        mock_range_diff.return_value = "+ ensure_utf8_stdio()"
+        mock_load.return_value = [
+            Rule(
+                id="team-02-code-quality",
+                title="Code Quality",
+                severity_default="ERROR",
+                applies_to=["**/*.py"],
+                content="Use typed Python.",
+            )
+        ]
+        mock_instance = MagicMock()
+        mock_instance.review_diff.return_value = ReviewResult(
+            passed=True,
+            summary="Pass",
+            violations=[],
+            degraded=False,
+            evaluation_path="stage1_fast_pass(gemini-decision-1)",
+        )
+        mock_client_cls.return_value = mock_instance
+
+        exit_code = run_review(
+            diff_range="origin/main...HEAD",
+            audit_file=self.cache_dir / "audit.log",
+        )
+        self.assertEqual(exit_code, 0)
+        mock_staged_files.assert_not_called()
+        mock_range_files.assert_called_once_with("origin/main...HEAD", root_dir=".")
+        mock_range_diff.assert_called_once_with("origin/main...HEAD", root_dir=".")
+
 
 if __name__ == "__main__":
     unittest.main()

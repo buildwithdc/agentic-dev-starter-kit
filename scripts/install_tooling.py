@@ -31,6 +31,7 @@ try:
         PERSONAL_TIER_DIR_NAME,
         RULES_DIR_NAME,
         TEAM_TIER_DIR_NAME,
+        ensure_utf8_stdio,
         get_global_config_dir,
     )
     from scripts.sync_org_rules import get_local_rules, load_dotenv, sync_org_rules
@@ -48,6 +49,7 @@ except ImportError:
         PERSONAL_TIER_DIR_NAME,
         RULES_DIR_NAME,
         TEAM_TIER_DIR_NAME,
+        ensure_utf8_stdio,
         get_global_config_dir,
     )
     from sync_org_rules import get_local_rules, load_dotenv, sync_org_rules
@@ -1191,6 +1193,7 @@ def run_init_wizard(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    ensure_utf8_stdio()
     parser = argparse.ArgumentParser(description="Dynamic Assistant Tooling Installer")
     parser.add_argument("--all", action="store_true", help="Install all tooling, hooks, and guidelines")
     parser.add_argument("--git-hook", action="store_true", help="Install Git pre-commit hook")

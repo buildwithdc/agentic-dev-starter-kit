@@ -30,6 +30,7 @@ try:
         DEFAULT_SYNC_TTL_SECONDS,
         ORG_RULES_REL_PATH,
         SYNC_TIMESTAMP_FILENAME,
+        ensure_utf8_stdio,
         get_global_credentials_file,
     )
 except ImportError:
@@ -38,6 +39,7 @@ except ImportError:
         DEFAULT_SYNC_TTL_SECONDS,
         ORG_RULES_REL_PATH,
         SYNC_TIMESTAMP_FILENAME,
+        ensure_utf8_stdio,
         get_global_credentials_file,
     )
 
@@ -739,6 +741,7 @@ def sync_org_rules(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    ensure_utf8_stdio()
     parser = argparse.ArgumentParser(description="Synchronize organizational rules")
     parser.add_argument(
         "--root-dir",

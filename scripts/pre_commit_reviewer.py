@@ -27,6 +27,7 @@ try:
         DEFAULT_REVIEW_MODE,
         RULES_DIR_NAME,
         VALID_REVIEW_MODES,
+        ensure_utf8_stdio,
     )
 except ImportError:
     from constants import DEFAULT_AUDIT_LOG_PATH as CONST_AUDIT_LOG_PATH
@@ -37,6 +38,7 @@ except ImportError:
         DEFAULT_REVIEW_MODE,
         RULES_DIR_NAME,
         VALID_REVIEW_MODES,
+        ensure_utf8_stdio,
     )
 
 from dependency_scanner import DependencyContext, scan_dependencies
@@ -95,6 +97,36 @@ def get_staged_diff() -> str:
     try:
         res = subprocess.run(
             ["git", "diff", "--cached", "--unified=3"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return res.stdout
+    except Exception:
+        return ""
+
+
+def get_range_files(diff_range: str, root_dir: Path | str = ".") -> list[str]:
+    """Retrieve list of modified files across an explicit Git revision range (for PR/CI audits)."""
+    try:
+        res = subprocess.run(
+            ["git", "diff", "--name-only", "--diff-filter=ACMR", diff_range],
+            cwd=root_dir,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return [f.strip() for f in res.stdout.splitlines() if f.strip()]
+    except Exception:
+        return []
+
+
+def get_range_diff(diff_range: str, root_dir: Path | str = ".") -> str:
+    """Retrieve unified diff across an explicit Git revision range (for PR/CI audits)."""
+    try:
+        res = subprocess.run(
+            ["git", "diff", "--unified=3", diff_range],
+            cwd=root_dir,
             capture_output=True,
             text=True,
             check=True,
@@ -278,8 +310,9 @@ def run_review(
     dep_depth: int | None = None,
     max_dep_chars: int | None = None,
     root_dir: Path | str = ".",
+    diff_range: str | None = None,
 ) -> int:
-    """Execute pre-commit review workflow."""
+    """Execute pre-commit or PR diff review workflow."""
     e2e_t0 = time.perf_counter()
 
     # 1. Check bypass flag
@@ -293,8 +326,8 @@ def run_review(
         )
         return 0
 
-    # 2. Check rebase status
-    if is_git_rebasing():
+    # 2. Check rebase status (only when inspecting local index rather than an explicit diff range)
+    if not diff_range and is_git_rebasing():
         print(f"{CYAN}Git rebase/cherry-pick detected. Fast-tracking pre-commit review.{RESET}")
         log_audit_entry(
             "SKIPPED (REBASE)",
@@ -304,14 +337,23 @@ def run_review(
         )
         return 0
 
-    # 3. Get staged files
-    staged_files = get_staged_files()
-    if not staged_files:
-        return 0
-
-    diff_text = get_staged_diff()
-    if not diff_text.strip():
-        return 0
+    # 3. Get target files and diff (either explicit revision range or staged index)
+    if diff_range:
+        staged_files = get_range_files(diff_range, root_dir=root_dir)
+        if not staged_files:
+            print(f"{CYAN}ℹ️  No modified files detected in diff range '{diff_range}'.{RESET}")
+            return 0
+        diff_text = get_range_diff(diff_range, root_dir=root_dir)
+        if not diff_text.strip():
+            print(f"{CYAN}ℹ️  No text diff detected in diff range '{diff_range}'.{RESET}")
+            return 0
+    else:
+        staged_files = get_staged_files()
+        if not staged_files:
+            return 0
+        diff_text = get_staged_diff()
+        if not diff_text.strip():
+            return 0
 
     # 4. Trigger background sync check for organizational rules (< 1ms check, non-blocking)
     try:
@@ -434,6 +476,7 @@ def run_review(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    ensure_utf8_stdio()
     parser = argparse.ArgumentParser(description="Pre-commit LLM Best-Practices Reviewer")
     parser.add_argument(
         "--rules-dir",
@@ -507,6 +550,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=".",
         help="Root repository directory (default: .)",
     )
+    parser.add_argument(
+        "--diff-range",
+        default=None,
+        help="Explicit Git revision range to review (e.g. 'origin/main...HEAD' for PR/CI audits) instead of staged index",
+    )
 
     args = parser.parse_args(argv)
     load_dotenv(args.root_dir)
@@ -535,6 +583,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         dep_depth=args.dep_depth,
         max_dep_chars=args.max_dep_chars,
         root_dir=args.root_dir,
+        diff_range=args.diff_range,
     )
 
 
