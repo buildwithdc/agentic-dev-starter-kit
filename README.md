@@ -12,9 +12,9 @@ This repository provides:
 2. **24-Hour Non-Blocking Background Org Rule Sync** (`scripts/sync_org_rules.py`): Automatically checks and updates enterprise rules in a detached background worker without delaying developers' pre-commit workflows.
 3. **Dynamic Multi-Assistant Tooling & Skills** (`scripts/install_tooling.py`): Zero repository clutter; generates Git hooks, Antigravity skills/hooks, and Claude Code commands on demand.
 4. **VCS-Isolated Personal Preference Persistence** (`scripts/preference_manager.py` & `.agents/rules/personal/`): Captures developer habits into persistent rules without polluting git diffs or creating repository merge conflicts.
-5. **Universal Pre-Commit Review Engine & Multi-Language Dependency Scanner** (`scripts/pre_commit_reviewer.py`, `scripts/dependency_scanner.py`, & `scripts/gemini_client.py`): Gemini 3.8 Flash powered diff evaluation with bidirectional N-degree local dependency context scanning (upstream contracts & downstream callers across Python, Java, Go, TypeScript/JS, Rust, Kotlin, C#, and C/C++), Google Application Default Credentials (ADC) and Google AI Studio support, SHA-256 diff + dependency caching, and a non-weakening multi-tier gating policy.
-6. **Authoritative CI Gatekeeper** (`.github/workflows/ai_rules_audit.yml`): "Two-Grip" governance model providing local pre-commit assistance paired with mandatory remote CI compliance.
-7. **Standalone Binary & Unified CLI (`agentic-dev`)** (`scripts/cli.py`, `scripts/build_binary.py`, & `scripts/package_tooling.py`): Zero-clutter native binary (`dist/agentic-dev`) and lightweight zipapp (`dist/agentic-dev.pyz`) with an interactive 3-step setup wizard, collision-safe `.env` management, and dynamic organizational rule synchronization.
+5. **Universal Pre-Commit Review Engine & Multi-Language Dependency Scanner** (`scripts/pre_commit_reviewer.py`, `scripts/dependency_scanner.py`, & `scripts/gemini_client.py`): Hybrid two-stage evaluation (`gemini-decision-1` fast System 1 gate + `gemini-3.8-flash` `--explain` JSON remediation) with bidirectional N-degree local dependency context scanning (upstream contracts & downstream callers across Python, Java, Go, TypeScript/JS, Rust, Kotlin, C#, and C/C++), Google Application Default Credentials (ADC) and `GOOGLE_AI_STUDIO_KEY` support, SHA-256 diff + dependency caching, `.agents/audit.log` telemetry, and a non-weakening multi-tier gating policy.
+6. **Authoritative CI & Multi-OS Release Pipelines** (`.github/workflows/ci.yml`, `.github/workflows/ai_rules_audit.yml`, & `.github/workflows/release.yml`): "Two-Grip" governance model pairing local pre-commit assistance with remote CI lint/test/rule compliance and automated Linux, macOS, Windows, and `.pyz` release builds.
+7. **Standalone Binary, Global Auth & Unified CLI (`agentic-dev`)** (`scripts/cli.py`, `scripts/auth_manager.py`, `scripts/build_binary.py`, & `scripts/package_tooling.py`): Zero-clutter native binary (`dist/agentic-dev`) and lightweight zipapp (`dist/agentic-dev.pyz`) with an interactive 4-step setup wizard (including global `~/.local/bin` PATH setup and `agentic-dev uninstall`), user-global `0600` credential store (`agentic-dev auth`), collision-safe `.env` management, and dynamic organizational rule synchronization.
 
 ---
 
@@ -29,9 +29,9 @@ Rules are partitioned into three distinct lifecycles and orchestrated through th
 ```mermaid
 flowchart TD
     subgraph CLI ["Standalone CLI & Setup Wizard (agentic-dev / cli.py)"]
-        C1["agentic-dev init: 3-Step Setup Wizard (install_tooling.py)"]
+        C1["agentic-dev init & uninstall: 4-Step Wizard + Global PATH (install_tooling.py)"]
         C2["Template & Collision-Safe .env Merger (bundled_assets.py)"]
-        C3["agentic-dev doctor: Hook, Rule & Auth Diagnostics"]
+        C3["agentic-dev auth & doctor: 0600 Global Credentials (auth_manager.py) & Diagnostics"]
         C4["Git Hook (.git/hooks/pre-commit) & Assistant Skills (.agents/ & .claude/)"]
         C1 --> C2
         C1 --> C4
@@ -60,18 +60,19 @@ flowchart TD
     subgraph Engine ["Universal Review Engine (agentic-dev review / pre_commit_reviewer.py)"]
         E1["Rule Loader (rule_loader.py): Non-Weakening Precedence (Org > Team > Personal)"]
         E2["Dependency Scanner (dependency_scanner.py): Bidirectional N-Degree AST & Call Sites"]
-        E3["Gemini Client (gemini_client.py): Gemini 3.8 Flash + SHA-256 Cache + Two-Tier Gate"]
+        E3["Hybrid Gemini Client (gemini_client.py): Stage 1 Decision 1 Gate + Stage 2 3.8 Flash (--explain)"]
         E1 --> E3
         E2 --> E3
     end
 
     C2 -.->|Configures ORG_RULES_SYNC_URL| O4
+    C3 -.->|Resolves ADC or GOOGLE_AI_STUDIO_KEY| E3
     C4 -->|Triggers on git commit| Engine
     Tier1 -->|Strict Precedence: Cannot be overridden| E1
     Tier2 -->|Contextual Architecture Rules| E1
     Tier3 -->|Ergonomics: Cannot weaken higher tiers| E1
     E3 -->|Pass: WARN / INFO| OpenPR["Commit, push and open PR"]
-    OpenPR --> CI["Authoritative CI Audit (ai_rules_audit.yml)"]
+    OpenPR --> CI["GitHub Actions CI, Audit & Multi-OS Release (ci.yml, ai_rules_audit.yml, release.yml)"]
     E3 -->|Block: CRITICAL / ERROR — Rework| CLI
 ```
 
@@ -81,18 +82,18 @@ flowchart TD
 sequenceDiagram
     autonumber
     actor DevOrAgent as Assistant / Developer
-    participant CLI as agentic-dev init (Setup Wizard)
+    participant CLI as agentic-dev init / auth
     participant Git as Git CLI
     participant Hook as .git/hooks/pre-commit
     participant Reviewer as agentic-dev review (pre_commit_reviewer.py)
     participant Worker as agentic-dev sync (sync_org_rules.py)
     participant Scanner as dependency_scanner.py & rule_loader.py
-    participant Engine as Gemini 3.8 Flash (gemini_client.py)
+    participant Engine as Gemini Decision 1 & 3.8 Flash (gemini_client.py)
     participant Central as Central Rules Repo (ORG_RULES_SYNC_URL)
 
-    opt One-Time Workspace Initialization
-        DevOrAgent->>CLI: ./agentic-dev init (3-Step Wizard)
-        CLI->>CLI: Merge .env / .env.example & .gitignore (bundled_assets.py)
+    opt One-Time Workspace & Global Auth Initialization
+        DevOrAgent->>CLI: ./agentic-dev init (4-Step Wizard + Global PATH) & agentic-dev auth set
+        CLI->>CLI: Merge .env / .env.example, .gitignore & ~/.config/agentic-dev/credentials.env
         CLI->>Hook: Install .git/hooks/pre-commit & assistant skills (.agents/, .claude/)
         CLI->>Central: Initial sync of Tier 1 Org rules into .agents/rules/org/
     end
@@ -111,14 +112,14 @@ sequenceDiagram
 
     Reviewer->>Scanner: Load 3-tier rules & scan N-degree upstream/downstream dependencies
     Scanner-->>Reviewer: Matched rules (Org > Team > Personal) + neighbor AST/call-site snippets
-    Reviewer->>Engine: Evaluate staged diff + dependency context (or hit SHA-256 cache)
+    Reviewer->>Engine: Stage 1 fast decision gate (+ Stage 2 3.8 Flash if --explain) or hit SHA-256 cache
     alt Critical / Error Violations Detected
-        Engine-->>Reviewer: Structured Violations + Remediation Diff
+        Engine-->>Reviewer: Blocking Decision / Remediation Report + audit.log entry
         Reviewer-->>Hook: Exit Code 1 + Diagnostic Report
         Hook-->>Git: Block commit
         Git-->>DevOrAgent: ❌ Commit Blocked with remediation instructions
     else Clean Diff or Advisory
-        Engine-->>Reviewer: Passed (with optional WARN / INFO advisories)
+        Engine-->>Reviewer: Passed (with optional WARN / INFO advisories) + audit.log entry
         Reviewer-->>Hook: Exit Code 0
         Hook-->>Git: Commit allowed
         Git-->>DevOrAgent: ✅ Commit Created Successfully
