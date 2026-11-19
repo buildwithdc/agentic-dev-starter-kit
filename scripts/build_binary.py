@@ -302,7 +302,22 @@ def install_local_binary(
     return dest
 
 
+def _ensure_utf8_stdio() -> None:
+    """Ensure stdout/stderr use UTF-8 so emoji output works on Windows cp1252 consoles."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            enc = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+            if enc != "utf8":
+                try:
+                    reconfigure(encoding="utf-8", errors="replace")
+                except Exception:
+                    pass
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    _ensure_utf8_stdio()
     parser = argparse.ArgumentParser(
         description="Build standalone `agentic-dev` binary and `.pyz` zipapp",
     )

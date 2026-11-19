@@ -27,6 +27,7 @@ try:
         DEFAULT_REVIEW_MODE,
         RULES_DIR_NAME,
         VALID_REVIEW_MODES,
+        ensure_utf8_stdio,
     )
 except ImportError:
     from constants import DEFAULT_AUDIT_LOG_PATH as CONST_AUDIT_LOG_PATH
@@ -37,6 +38,7 @@ except ImportError:
         DEFAULT_REVIEW_MODE,
         RULES_DIR_NAME,
         VALID_REVIEW_MODES,
+        ensure_utf8_stdio,
     )
 
 from dependency_scanner import DependencyContext, scan_dependencies
@@ -434,6 +436,7 @@ def run_review(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    ensure_utf8_stdio()
     parser = argparse.ArgumentParser(description="Pre-commit LLM Best-Practices Reviewer")
     parser.add_argument(
         "--rules-dir",

@@ -22,6 +22,7 @@ try:
     from scripts.constants import (
         DEFAULT_PERSONAL_PREFERENCES_PATH,
         RULES_DIR_NAME,
+        ensure_utf8_stdio,
     )
     from scripts.gemini_client import (
         GeminiReviewClient,
@@ -33,6 +34,7 @@ except ImportError:
     from constants import (
         DEFAULT_PERSONAL_PREFERENCES_PATH,
         RULES_DIR_NAME,
+        ensure_utf8_stdio,
     )
     from gemini_client import (
         GeminiReviewClient,
@@ -316,6 +318,7 @@ def remove_preference(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    ensure_utf8_stdio()
     parser = argparse.ArgumentParser(
         description="Personal & Workflow Engineering Preference Manager",
     )

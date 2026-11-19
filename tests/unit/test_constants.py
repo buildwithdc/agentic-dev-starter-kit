@@ -109,6 +109,26 @@ class TestConstants(unittest.TestCase):
 
         self.assertEqual(scripts.__version__, APP_VERSION)
 
+    def test_ensure_utf8_stdio_reconfigures_cp1252_streams(self) -> None:
+        import io
+        from unittest import mock
+
+        from scripts.constants import ensure_utf8_stdio
+
+        buf_out = io.BytesIO()
+        buf_err = io.BytesIO()
+        fake_out = io.TextIOWrapper(buf_out, encoding="cp1252")
+        fake_err = io.TextIOWrapper(buf_err, encoding="cp1252")
+
+        with mock.patch("sys.stdout", fake_out), mock.patch("sys.stderr", fake_err):
+            ensure_utf8_stdio()
+            self.assertEqual(fake_out.encoding.lower(), "utf-8")
+            self.assertEqual(fake_err.encoding.lower(), "utf-8")
+            fake_out.write("✅ Built standalone native binary\n")
+            fake_out.flush()
+
+        self.assertIn("✅", buf_out.getvalue().decode("utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
