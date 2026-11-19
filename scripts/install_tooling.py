@@ -11,12 +11,14 @@ from __future__ import annotations
 import argparse
 import builtins
 import os
+import shutil
 import stat
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 try:
+    from scripts.auth_manager import inspect_auth_status
     from scripts.bundled_assets import (
         ENV_BLOCK_START_TAG,
         bootstrap_workspace_templates,
@@ -29,9 +31,11 @@ try:
         PERSONAL_TIER_DIR_NAME,
         RULES_DIR_NAME,
         TEAM_TIER_DIR_NAME,
+        get_global_config_dir,
     )
     from scripts.sync_org_rules import get_local_rules, load_dotenv, sync_org_rules
 except ImportError:
+    from auth_manager import inspect_auth_status
     from bundled_assets import (
         ENV_BLOCK_START_TAG,
         bootstrap_workspace_templates,
@@ -44,6 +48,7 @@ except ImportError:
         PERSONAL_TIER_DIR_NAME,
         RULES_DIR_NAME,
         TEAM_TIER_DIR_NAME,
+        get_global_config_dir,
     )
     from sync_org_rules import get_local_rules, load_dotenv, sync_org_rules
 
@@ -477,6 +482,14 @@ def update_gitignore(
     return True
 
 
+def _make_executable(path: Path) -> None:
+    """Ensure executable permissions on POSIX files."""
+    if os.name == "nt":
+        return
+    current_mode = path.stat().st_mode
+    path.chmod(current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
 def _detect_invoking_binary_path() -> Path | None:
     """Return resolved path of the invoking standalone binary or .pyz zipapp if applicable."""
     env_bin = os.getenv("AGENTIC_DEV_INVOKING_BIN")
@@ -490,11 +503,251 @@ def _detect_invoking_binary_path() -> Path | None:
             return cand
     if sys.argv and sys.argv[0]:
         argv0 = Path(sys.argv[0])
-        if argv0.suffix == ".pyz" or argv0.name in ("agentic-dev", "agentic-dev.exe"):
+        if argv0.suffix == ".pyz" or (
+            argv0.name.startswith("agentic-dev") and not argv0.name.endswith(".py")
+        ):
             cand = argv0.resolve()
             if cand.is_file():
                 return cand
     return None
+
+
+def get_global_bin_dir() -> Path:
+    """Return the user-level global binary directory (`~/.local/bin` on POSIX)."""
+    explicit = os.getenv("AGENTIC_DEV_BIN_DIR", "").strip()
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    if os.name == "nt":
+        local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+        base = Path(local_app_data) if local_app_data else (Path.home() / "AppData" / "Local")
+        return (base / "agentic-dev" / "bin").resolve()
+    return (Path.home() / ".local" / "bin").resolve()
+
+
+def _target_global_binary_name(source_bin: Path) -> str:
+    """Return canonical executable filename inside the global bin directory."""
+    if os.name == "nt":
+        if source_bin.suffix.lower() == ".pyz":
+            return "agentic-dev.pyz"
+        return "agentic-dev.exe"
+    return "agentic-dev"
+
+
+def is_dir_on_path(bin_dir: Path) -> bool:
+    """Return True if `bin_dir` is present in the current process PATH."""
+    target = bin_dir.expanduser().resolve()
+    for entry in os.getenv("PATH", "").split(os.pathsep):
+        cleaned = entry.strip()
+        if not cleaned:
+            continue
+        try:
+            if Path(cleaned).expanduser().resolve() == target:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _detect_shell_rc_file() -> Path:
+    """Determine the user's primary shell startup file on POSIX."""
+    shell_name = Path(os.getenv("SHELL", "")).name.lower()
+    home = Path.home()
+    if "zsh" in shell_name:
+        return home / ".zshrc"
+    if "bash" in shell_name:
+        bash_profile = home / ".bash_profile"
+        if sys.platform == "darwin" or bash_profile.exists():
+            return bash_profile
+        return home / ".bashrc"
+    return home / ".profile"
+
+
+def ensure_dir_in_shell_rc(
+    bin_dir: Path,
+    rc_file: Path | None = None,
+) -> tuple[Path, bool]:
+    """Append `export PATH=...` for `bin_dir` to the shell rc file if not already present."""
+    target_rc = rc_file if rc_file is not None else _detect_shell_rc_file()
+    resolved_bin = bin_dir.expanduser().resolve()
+    default_posix_bin = (Path.home() / ".local" / "bin").resolve()
+    path_expr = "$HOME/.local/bin" if resolved_bin == default_posix_bin else str(resolved_bin)
+
+    existing = target_rc.read_text(encoding="utf-8") if target_rc.is_file() else ""
+    if str(resolved_bin) in existing or (
+        resolved_bin == default_posix_bin and "$HOME/.local/bin" in existing
+    ):
+        return target_rc, False
+
+    export_line = f'export PATH="{path_expr}:$PATH"'
+    addition = f"\n# Added by agentic-dev\n{export_line}\n"
+    target_rc.parent.mkdir(parents=True, exist_ok=True)
+    with target_rc.open("a", encoding="utf-8") as handle:
+        if existing and not existing.endswith("\n"):
+            handle.write("\n")
+        handle.write(addition)
+    return target_rc, True
+
+
+def install_binary_globally(
+    source_bin: Path,
+    target_dir: Path | None = None,
+) -> Path:
+    """Copy `source_bin` to the user-global bin directory and mark it executable."""
+    resolved_src = source_bin.expanduser().resolve()
+    if not resolved_src.is_file():
+        raise FileNotFoundError(f"Binary not found: {resolved_src}")
+
+    dest_dir = target_dir.expanduser().resolve() if target_dir is not None else get_global_bin_dir()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = (dest_dir / _target_global_binary_name(resolved_src)).resolve()
+
+    if resolved_src != dest_path:
+        shutil.copy2(resolved_src, dest_path)
+    _make_executable(dest_path)
+    return dest_path
+
+
+def get_global_cache_dir() -> Path:
+    """Return the user-level runtime extraction cache directory (`~/.cache/agentic-dev`)."""
+    xdg_cache = os.getenv("XDG_CACHE_HOME", "").strip()
+    cache_base = Path(xdg_cache).expanduser() if xdg_cache else (Path.home() / ".cache")
+    return (cache_base / "agentic-dev").resolve()
+
+
+def _candidate_shell_rc_files() -> list[Path]:
+    """Collect distinct candidate shell startup files that exist on POSIX."""
+    home = Path.home()
+    candidates = [
+        _detect_shell_rc_file(),
+        home / ".zshrc",
+        home / ".bash_profile",
+        home / ".bashrc",
+        home / ".profile",
+    ]
+    seen: set[Path] = set()
+    existing: list[Path] = []
+    for cand in candidates:
+        resolved = cand.expanduser()
+        if resolved not in seen and resolved.is_file():
+            seen.add(resolved)
+            existing.append(resolved)
+    return existing
+
+
+def _is_matching_agentic_path_export(line: str, resolved_bin: Path, default_posix_bin: Path) -> bool:
+    """Return True if `line` exports `resolved_bin` (handling $HOME and symlink aliases)."""
+    stripped = line.strip()
+    if stripped in {f'export PATH="{resolved_bin}:$PATH"', 'export PATH="$HOME/.local/bin:$PATH"'} and (
+        stripped != 'export PATH="$HOME/.local/bin:$PATH"' or resolved_bin == default_posix_bin
+    ):
+        return True
+    prefix = 'export PATH="'
+    suffix = ':$PATH"'
+    if stripped.startswith(prefix) and stripped.endswith(suffix):
+        raw_dir = stripped[len(prefix) : -len(suffix)].replace("$HOME", str(Path.home()))
+        try:
+            return Path(raw_dir).expanduser().resolve() == resolved_bin
+        except OSError:
+            return False
+    return False
+
+
+def remove_dir_from_shell_rc(
+    bin_dir: Path,
+    rc_files: Sequence[Path] | None = None,
+) -> list[Path]:
+    """Remove `# Added by agentic-dev` PATH exports for `bin_dir` from shell rc files."""
+    resolved_bin = bin_dir.expanduser().resolve()
+    default_posix_bin = (Path.home() / ".local" / "bin").resolve()
+
+    targets = list(rc_files) if rc_files is not None else _candidate_shell_rc_files()
+    updated_files: list[Path] = []
+    for rc_path in targets:
+        if not rc_path.is_file():
+            continue
+        lines = rc_path.read_text(encoding="utf-8").splitlines()
+        new_lines: list[str] = []
+        changed = False
+        idx = 0
+        while idx < len(lines):
+            line = lines[idx]
+            if (
+                line.strip() == "# Added by agentic-dev"
+                and idx + 1 < len(lines)
+                and _is_matching_agentic_path_export(lines[idx + 1], resolved_bin, default_posix_bin)
+            ):
+                changed = True
+                idx += 2
+                continue
+            new_lines.append(line)
+            idx += 1
+
+        if changed:
+            cleaned = "\n".join(new_lines).strip()
+            rc_path.write_text((cleaned + "\n") if cleaned else "", encoding="utf-8")
+            updated_files.append(rc_path)
+
+    return updated_files
+
+
+def uninstall_global(
+    purge: bool = False,
+    rc_files: Sequence[Path] | None = None,
+) -> dict[str, list[Path]]:
+    """Remove globally installed binary, shell rc PATH entries, runtime cache, and optionally config."""
+    removed_bins: list[Path] = []
+    removed_caches: list[Path] = []
+    removed_configs: list[Path] = []
+
+    bin_dir = get_global_bin_dir()
+    candidate_names = ("agentic-dev", "agentic-dev.exe", "agentic-dev.pyz")
+    for name in candidate_names:
+        bin_path = bin_dir / name
+        if bin_path.is_file() or bin_path.is_symlink():
+            try:
+                bin_path.unlink()
+                removed_bins.append(bin_path)
+                print(f"🗑️  Removed global binary -> {bin_path}")
+            except OSError as exc:
+                print(f"⚠️  Could not remove {bin_path}: {exc}. Delete it manually.")
+
+    updated_rc_files = remove_dir_from_shell_rc(bin_dir, rc_files=rc_files)
+    for rc_file in updated_rc_files:
+        print(f"🗑️  Removed agentic-dev PATH entry from {rc_file}")
+
+    cache_dir = get_global_cache_dir()
+    if cache_dir.exists():
+        try:
+            shutil.rmtree(cache_dir)
+            removed_caches.append(cache_dir)
+            print(f"🗑️  Removed runtime cache -> {cache_dir}")
+        except OSError as exc:
+            print(f"⚠️  Could not remove runtime cache {cache_dir}: {exc}")
+
+    config_dir = get_global_config_dir()
+    if config_dir.exists():
+        if purge:
+            try:
+                shutil.rmtree(config_dir)
+                removed_configs.append(config_dir)
+                print(f"🗑️  Removed user-global config & credentials -> {config_dir}")
+            except OSError as exc:
+                print(f"⚠️  Could not remove config directory {config_dir}: {exc}")
+        else:
+            print(
+                f"ℹ️  Preserved user-global credentials/config at {config_dir} "
+                "(pass `--purge` or run `agentic-dev auth clear` to remove)."
+            )
+
+    if not (removed_bins or updated_rc_files or removed_caches or removed_configs):
+        print("ℹ️  No global agentic-dev installation found.")
+
+    return {
+        "binaries": removed_bins,
+        "rc_files": updated_rc_files,
+        "caches": removed_caches,
+        "configs": removed_configs,
+    }
 
 
 def _render_git_hook_script() -> str:
@@ -773,17 +1026,100 @@ def _configure_env_sync_url(root_dir: Path, sync_url: str) -> Path:
     return env_file
 
 
+def _configure_global_binary_step(
+    invoking_bin: Path | None,
+    interactive: bool = True,
+) -> None:
+    """Optionally copy the invoking binary to a user-global bin dir and update shell PATH."""
+    if invoking_bin is None:
+        if not interactive:
+            print("ℹ️  --install-global skipped (not running from a standalone `agentic-dev` binary).")
+        return
+
+    bin_dir = get_global_bin_dir()
+    target_name = _target_global_binary_name(invoking_bin)
+    already_in_bin = invoking_bin.resolve() == (bin_dir / target_name).resolve()
+    on_path = is_dir_on_path(bin_dir)
+
+    installed_or_present = already_in_bin
+    if not already_in_bin:
+        should_copy = True
+        if interactive:
+            try:
+                resp = (
+                    input(
+                        f"Copy '{invoking_bin.name}' to {bin_dir} so `agentic-dev` works globally? [y/N]: "
+                    )
+                    .strip()
+                    .lower()
+                )
+                should_copy = resp in ("y", "yes")
+            except (EOFError, KeyboardInterrupt):
+                print("\nSkipping global binary installation.")
+                should_copy = False
+
+        if should_copy:
+            dest = install_binary_globally(invoking_bin, bin_dir)
+            print(f"✅ Installed global binary -> {dest}")
+            installed_or_present = True
+        else:
+            print("⏭️  Skipped global binary installation.")
+
+    if installed_or_present and not on_path:
+        if os.name == "nt":
+            print(f"ℹ️  Add {bin_dir} to your user PATH so `agentic-dev` can be run from any folder.")
+            return
+
+        rc_file = _detect_shell_rc_file()
+        should_update_rc = True
+        if interactive:
+            try:
+                path_resp = (
+                    input(f"{bin_dir} is not in your PATH. Add it to {rc_file}? [y/N]: ")
+                    .strip()
+                    .lower()
+                )
+                should_update_rc = path_resp in ("y", "yes")
+            except (EOFError, KeyboardInterrupt):
+                print("\nSkipping PATH update.")
+                should_update_rc = False
+
+        if should_update_rc:
+            updated_rc, modified = ensure_dir_in_shell_rc(bin_dir, rc_file)
+            if modified:
+                print(
+                    f"✅ Added {bin_dir} to PATH in {updated_rc} "
+                    f"(run `source {updated_rc}` or open a new terminal)."
+                )
+            else:
+                print(
+                    f"ℹ️  {bin_dir} is already referenced in {updated_rc} "
+                    f"(run `source {updated_rc}` or open a new terminal)."
+                )
+        else:
+            print(f'ℹ️  To add it manually later, run: export PATH="{bin_dir}:$PATH"')
+
+
 def run_init_wizard(
     root_dir: Path,
     ask_gitignore: bool = True,
 ) -> tuple[dict[str, bool], bool | None]:
-    """Run interactive 3-step installation wizard for `agentic-dev init`."""
+    """Run interactive installation wizard for `agentic-dev init`."""
+    invoking_bin = _detect_invoking_binary_path()
+    bin_dir = get_global_bin_dir()
+    already_in_global = bool(
+        invoking_bin is not None
+        and invoking_bin.resolve() == (bin_dir / _target_global_binary_name(invoking_bin)).resolve()
+    )
+    ask_global_bin = invoking_bin is not None and (not already_in_global or not is_dir_on_path(bin_dir))
+    total_steps = 4 if ask_global_bin else 3
+
     print("\n🧙 Agentic Dev Interactive Setup Wizard")
     print("=" * 60)
     print(f"Target Workspace: {root_dir}")
 
     # Step 1: Select coding assistant(s)
-    print("\n[Step 1/3] Select coding assistant(s) to configure:")
+    print(f"\n[Step 1/{total_steps}] Select coding assistant(s) to configure:")
     print("  1) All supported assistants (Antigravity + Claude Code + AGENTS.md + Git Hook) [default]")
     print("  2) Antigravity only (.agents/skills, .agents/hooks.json, AGENTS.md, Git Hook)")
     print("  3) Claude Code only (.claude/commands, .claude/skills, AGENTS.md, Git Hook)")
@@ -812,7 +1148,7 @@ def run_init_wizard(
         selection["all"] = True
 
     # Step 2: Configure .env & Dynamic Org Rules Sync URL
-    print("\n[Step 2/3] Configure .env and Organizational Rules Sync:")
+    print(f"\n[Step 2/{total_steps}] Configure .env and Organizational Rules Sync:")
     print(f"  Default URL: {DEFAULT_SAMPLE_ORG_RULES_URL}")
     try:
         url_resp = input(
@@ -831,7 +1167,7 @@ def run_init_wizard(
     # Step 3: .gitignore preference
     gitignore_pref: bool | None = None
     if ask_gitignore:
-        print("\n[Step 3/3] Git Ignore Configuration:")
+        print(f"\n[Step 3/{total_steps}] Git Ignore Configuration:")
         try:
             gi_resp = (
                 input(
@@ -844,6 +1180,11 @@ def run_init_wizard(
         except (EOFError, KeyboardInterrupt):
             print("\nSkipping .gitignore update.")
             gitignore_pref = False
+
+    # Step 4: Global binary & PATH installation (when invoked from standalone binary/.pyz)
+    if ask_global_bin:
+        print(f"\n[Step 4/{total_steps}] Global CLI Installation (PATH):")
+        _configure_global_binary_step(invoking_bin, interactive=True)
 
     print("=" * 60 + "\n")
     return selection, gitignore_pref
@@ -858,6 +1199,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--agents", action="store_true", help="Ensure AGENTS.md canonical rules pointer")
     parser.add_argument("--clean", action="store_true", help="Remove all generated assistant artifacts")
     parser.add_argument("-w", "--wizard", action="store_true", help="Run interactive setup wizard")
+    parser.add_argument(
+        "--install-global",
+        action="store_true",
+        help="Copy invoking `agentic-dev` binary to user-global bin dir (~/.local/bin) and configure PATH",
+    )
+    parser.add_argument(
+        "--uninstall-global",
+        action="store_true",
+        help="Remove globally installed binary, shell PATH entry, and runtime cache",
+    )
+    parser.add_argument(
+        "--purge",
+        action="store_true",
+        help="With --uninstall-global, also remove user-global credentials/config (~/.config/agentic-dev)",
+    )
     parser.add_argument("--binary-mode", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("-y", "--yes", action="store_true", help="Automatically accept insert-only pointer injection prompts")
 
@@ -881,6 +1237,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     root_dir = Path(args.root_dir).resolve()
+
+    if args.uninstall_global:
+        uninstall_global(purge=args.purge)
+        return 0
 
     if args.clean:
         clean_tooling(root_dir)
@@ -928,6 +1288,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         do_antigravity = args.antigravity
         do_claude = args.claude
         do_agents = args.agents
+        if args.install_global:
+            _configure_global_binary_step(_detect_invoking_binary_path(), interactive=False)
 
     existing_agents = find_existing_file(root_dir, ("AGENTS.md", "agents.md"))
     had_non_empty_agents = bool(
@@ -983,6 +1345,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             include_claude=install_all or do_claude,
             include_agents_md=created_new_agents,
             include_scripts=not is_binary_mode,
+        )
+
+    if not inspect_auth_status(root_dir, include_adc=False).configured:
+        print(
+            "💡 Tip: No API key configured yet. Run `agentic-dev auth set` to store "
+            "your key globally across repositories (or use Google Cloud ADC)."
         )
     return 0
 

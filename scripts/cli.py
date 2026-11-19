@@ -14,13 +14,14 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 try:
-    from scripts import __version__
     from scripts.auth_manager import inspect_auth_status
     from scripts.auth_manager import main as auth_main
     from scripts.bundled_assets import bootstrap_workspace_templates
+    from scripts.constants import APP_VERSION as __version__
     from scripts.constants import RULES_DIR_NAME
     from scripts.gemini_client import GeminiClientConfig, get_adc_access_token
     from scripts.install_tooling import main as install_main
+    from scripts.install_tooling import uninstall_global
     from scripts.package_tooling import main as package_main
     from scripts.pre_commit_reviewer import main as review_main
     from scripts.preference_manager import main as prefs_main
@@ -37,9 +38,11 @@ except ImportError:
     from auth_manager import inspect_auth_status
     from auth_manager import main as auth_main
     from bundled_assets import bootstrap_workspace_templates
+    from constants import APP_VERSION as __version__
     from constants import RULES_DIR_NAME
     from gemini_client import GeminiClientConfig, get_adc_access_token
     from install_tooling import main as install_main
+    from install_tooling import uninstall_global
     from package_tooling import main as package_main
     from pre_commit_reviewer import main as review_main
     from preference_manager import main as prefs_main
@@ -53,12 +56,11 @@ except ImportError:
         main as sync_main,
     )
 
-    __version__ = "0.2.0"
-
 
 SUBCOMMANDS: tuple[str, ...] = (
     "init",
     "install",
+    "uninstall",
     "auth",
     "review",
     "sync",
@@ -162,6 +164,22 @@ def run_doctor(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
+def run_uninstall(argv: Sequence[str] | None = None) -> int:
+    """Remove globally installed binary, shell PATH entry, and runtime cache."""
+    parser = argparse.ArgumentParser(
+        prog="agentic-dev uninstall",
+        description="Remove globally installed binary, shell PATH entry, and runtime cache",
+    )
+    parser.add_argument(
+        "--purge",
+        action="store_true",
+        help="Also remove user-global credentials/config (~/.config/agentic-dev)",
+    )
+    args = parser.parse_args(argv)
+    uninstall_global(purge=args.purge)
+    return 0
+
+
 def _extract_root_dir_from_argv(sub_argv: Sequence[str]) -> Path:
     """Extract --root-dir from subcommand argv if present, defaulting to current directory."""
     for idx, token in enumerate(sub_argv):
@@ -181,6 +199,7 @@ Agentic Dev Governance & Local Validation Loop CLI (v{__version__})
 
 subcommands:
   init (install)  Initialize workspace hooks, assistant skills, .env.example, and org rules
+  uninstall       Remove globally installed binary, shell PATH entry, and runtime cache
   auth            Manage LLM provider credentials (status, set, clear)
   review          Run pre-commit best-practices review (dependency + prompt + LLM audit)
   sync            Synchronize Tier 1 organizational rules from remote origin
@@ -215,6 +234,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             if "--binary-mode" not in sub_argv:
                 sub_argv = ["--binary-mode", *sub_argv]
         return install_main(sub_argv)
+
+    if subcommand == "uninstall":
+        return run_uninstall(sub_argv)
 
     if subcommand == "auth":
         return auth_main(sub_argv)

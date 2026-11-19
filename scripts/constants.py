@@ -103,6 +103,7 @@ DEFAULT_DECISION_THRESHOLD = 0.65
 VALID_REVIEW_MODES: tuple[str, ...] = ("decision_only", "hybrid", "generative_only")
 
 
+APP_VERSION = "0.2.0"
 ENV_CONFIG_DIR = "AGENTIC_DEV_CONFIG_DIR"
 GLOBAL_CREDENTIALS_FILENAME = "credentials.env"
 

@@ -306,31 +306,38 @@ You can distribute and bootstrap this tooling environment into any target reposi
 
 #### Option A (Recommended): Standalone Binary (`agentic-dev`)
 
-1. **Build the Standalone Binary**:
+1. **Download the Pre-built Binary (from GitHub Releases)**:
+   Download the binary matching your OS from [GitHub Releases](https://github.com/buildwithdc/agentic-dev-starter-kit/releases) (or use the cross-platform `agentic-dev.pyz` zipapp with Python 3.10+):
    ```bash
-   # Build both dist/agentic-dev (native binary) and dist/agentic-dev.pyz (zipapp)
-   .venv/bin/python scripts/build_binary.py
-
-   # Optional: also install to ~/.local/bin/agentic-dev
-   .venv/bin/python scripts/build_binary.py --install-local
+   # Example for macOS Apple Silicon (or use agentic-dev-linux-amd64 / agentic-dev.pyz)
+   curl -fsSL -o agentic-dev \
+     https://github.com/buildwithdc/agentic-dev-starter-kit/releases/latest/download/agentic-dev-macos-arm64
+   chmod +x agentic-dev
    ```
+   *(Or build from source locally: `.venv/bin/python scripts/build_binary.py --install-local`)*
 
-2. **Initialize Any Target Repository (Interactive 3-Step Wizard)**:
-   Place `agentic-dev` on your `PATH` (or directly in the target project root `./agentic-dev`) and run `init`:
+2. **Initialize Any Target Repository (Interactive Wizard)**:
    ```bash
    cd /path/to/target-workspace
-   ./agentic-dev init
+   /path/to/agentic-dev init
    ```
    The interactive wizard guides you through:
    - **Step 1**: Selecting your coding assistant(s) (Antigravity, Claude Code, `AGENTS.md` pointer, or Git hook only).
    - **Step 2**: Creating or non-destructively merging `.env` & `.env.example` using `# BEGIN AGENTIC DEV ENV` ... `# END AGENTIC DEV ENV` blocks (preserving any existing variables in your `.env`) and configuring `ORG_RULES_SYNC_URL`.
    - **Step 3**: Configuring `.gitignore` for generated assistant configs and local state (without adding `scripts/*.py` when running from the binary).
+   - **Step 4**: Copying the binary to `~/.local/bin/agentic-dev` (or `%LOCALAPPDATA%\agentic-dev\bin` on Windows) and optionally adding `~/.local/bin` to your shell `PATH` so `agentic-dev` can be run anywhere.
 
-3. **Verify Setup & Run Commands**:
+3. **Configure Your Personal API Key Once (User-Global)**:
    ```bash
-   ./agentic-dev doctor
-   ./agentic-dev sync --force --verbose
-   ./agentic-dev review
+   agentic-dev auth set
+   ```
+   Stores `GOOGLE_AI_STUDIO_KEY` securely (`0600`) in `~/.config/agentic-dev/credentials.env` so it works across every repository without duplicating secrets in repo `.env` files. *(Or skip if using Google Cloud ADC via `gcloud auth application-default login`.)*
+
+4. **Verify Setup & Run Commands**:
+   ```bash
+   agentic-dev doctor
+   agentic-dev sync --force --verbose
+   agentic-dev review
    ```
 
 #### Option B: Portable Script Zip Bundle (`package_tooling.py`)
@@ -375,9 +382,10 @@ The review engine incorporates robust safeguards to prevent workflow friction:
 ### `agentic-dev` (Unified CLI & Standalone Binary)
 Unified entrypoint dispatching to all local validation and governance tools:
 ```bash
-agentic-dev init                            # Launch interactive 3-step setup wizard
-agentic-dev init --all -y --gitignore       # Non-interactive full setup
-agentic-dev init --clean                    # Remove generated hooks, skills, and managed .env/.gitignore blocks
+agentic-dev init                            # Launch interactive setup wizard (includes global PATH install)
+agentic-dev init --all -y --gitignore       # Non-interactive full setup (--install-global to add to PATH)
+agentic-dev init --clean                    # Remove generated hooks, skills, and managed .env/.gitignore blocks in current repo
+agentic-dev uninstall [--purge]             # Remove global binary, shell PATH entry, and cache (--purge also deletes ~/.config/agentic-dev)
 agentic-dev auth status                     # Show resolved credential source and masked API key
 agentic-dev auth set [--local] [--stdin]    # Store API key in user-global config (0600) or repo .env
 agentic-dev auth clear [--local]            # Remove stored API key from global config or repo .env

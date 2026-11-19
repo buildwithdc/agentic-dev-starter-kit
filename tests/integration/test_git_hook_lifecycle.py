@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Integration tests for git hook lifecycle."""
 
+import os
 import subprocess
 import tempfile
 import unittest
@@ -65,8 +66,15 @@ class TestGitHookLifecycle(unittest.TestCase):
         test_file.write_text("def test_func() -> None:\n    pass\n", encoding="utf-8")
         subprocess.run(["git", "add", "sample.py"], cwd=self.repo_dir, check=True)
 
-        # Attempt commit without GOOGLE_AI_STUDIO_KEY (graceful offline degradation -> exit 0)
-        env = {"PATH": subprocess.os.environ.get("PATH", "")}
+        # Attempt commit without GOOGLE_AI_STUDIO_KEY (graceful offline degradation -> exit 0).
+        # Filter out any developer-global agentic-dev binary so the test exercises the repo hook script cleanly.
+        raw_path = os.environ.get("PATH", "")
+        filtered_path = os.pathsep.join(
+            entry
+            for entry in raw_path.split(os.pathsep)
+            if entry and not (Path(entry) / "agentic-dev").exists()
+        )
+        env = {"PATH": filtered_path, "HOME": str(self.repo_dir)}
         res = subprocess.run(
             ["git", "commit", "-m", "chore: add sample"],
             cwd=self.repo_dir,

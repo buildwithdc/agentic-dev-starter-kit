@@ -2,4 +2,6 @@
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+from scripts.constants import APP_VERSION
+
+__version__ = APP_VERSION
