@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 # ==============================================================================
@@ -102,7 +103,32 @@ DEFAULT_DECISION_THRESHOLD = 0.65
 VALID_REVIEW_MODES: tuple[str, ...] = ("decision_only", "hybrid", "generative_only")
 
 
+ENV_CONFIG_DIR = "AGENTIC_DEV_CONFIG_DIR"
+GLOBAL_CREDENTIALS_FILENAME = "credentials.env"
+
+
 def get_rule_path(tier: str, rule_filename: str, root_dir: Path | None = None) -> Path:
     """Resolve full Path for a tier and rule filename."""
     base = root_dir if root_dir is not None else Path(".")
     return base / RULES_DIR_NAME / tier / rule_filename
+
+
+def get_global_config_dir() -> Path:
+    """Resolve user-global configuration directory (XDG-compliant)."""
+    explicit = os.getenv(ENV_CONFIG_DIR, "").strip()
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    xdg_config = os.getenv("XDG_CONFIG_HOME", "").strip()
+    if xdg_config:
+        return Path(xdg_config).expanduser().resolve() / "agentic-dev"
+    if os.name == "nt":
+        appdata = os.getenv("APPDATA", "").strip()
+        if appdata:
+            return Path(appdata).expanduser().resolve() / "agentic-dev"
+    return (Path.home() / ".config" / "agentic-dev").resolve()
+
+
+def get_global_credentials_file() -> Path:
+    """Resolve the path to the user-global credentials dotenv file."""
+    return get_global_config_dir() / GLOBAL_CREDENTIALS_FILENAME
+

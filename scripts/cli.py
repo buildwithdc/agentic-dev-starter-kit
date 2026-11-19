@@ -15,6 +15,8 @@ if str(SCRIPT_DIR) not in sys.path:
 
 try:
     from scripts import __version__
+    from scripts.auth_manager import inspect_auth_status
+    from scripts.auth_manager import main as auth_main
     from scripts.bundled_assets import bootstrap_workspace_templates
     from scripts.constants import RULES_DIR_NAME
     from scripts.gemini_client import GeminiClientConfig, get_adc_access_token
@@ -32,6 +34,8 @@ try:
         main as sync_main,
     )
 except ImportError:
+    from auth_manager import inspect_auth_status
+    from auth_manager import main as auth_main
     from bundled_assets import bootstrap_workspace_templates
     from constants import RULES_DIR_NAME
     from gemini_client import GeminiClientConfig, get_adc_access_token
@@ -55,6 +59,7 @@ except ImportError:
 SUBCOMMANDS: tuple[str, ...] = (
     "init",
     "install",
+    "auth",
     "review",
     "sync",
     "prefs",
@@ -77,6 +82,7 @@ def run_doctor(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     root_dir = Path(args.root_dir).resolve()
+    auth_status = inspect_auth_status(root_dir, include_adc=False)
     load_dotenv(root_dir)
 
     print(f"=== agentic-dev doctor (v{__version__}) ===")
@@ -100,7 +106,7 @@ def run_doctor(argv: Sequence[str] | None = None) -> int:
         print(f"Config (.env): ✅ Found ({sync_note})")
     else:
         print(
-            "Config (.env): ⚠️  Missing .env (run `cp .env.example .env` to configure ORG_RULES_SYNC_URL / GOOGLE_AI_STUDIO_KEY)"
+            "Config (.env): ⚠️  Missing .env (optional; set ORG_RULES_SYNC_URL in .env or run `agentic-dev auth set` for a global key)"
         )
 
     rules_dir = root_dir / RULES_DIR_NAME
@@ -143,11 +149,15 @@ def run_doctor(argv: Sequence[str] | None = None) -> int:
         print(f"Review Mode:   Direct Gemini API (backend={cfg.backend}, model={cfg.model})")
 
     if has_api_key:
-        print("Auth Status:   ✅ GOOGLE_AI_STUDIO_KEY configured")
+        source_note = f" (source: {auth_status.source_label})" if auth_status.configured else ""
+        print(f"Auth Status:   ✅ GOOGLE_AI_STUDIO_KEY configured{source_note}")
     elif has_adc:
         print("Auth Status:   ✅ Google Cloud ADC token available")
     else:
-        print("Auth Status:   ⚠️  No GOOGLE_AI_STUDIO_KEY or ADC token detected (offline fallback active)")
+        print(
+            "Auth Status:   ⚠️  No GOOGLE_AI_STUDIO_KEY or ADC token detected "
+            "(run `agentic-dev auth set`; offline fallback active)"
+        )
 
     return 0
 
@@ -171,6 +181,7 @@ Agentic Dev Governance & Local Validation Loop CLI (v{__version__})
 
 subcommands:
   init (install)  Initialize workspace hooks, assistant skills, .env.example, and org rules
+  auth            Manage LLM provider credentials (status, set, clear)
   review          Run pre-commit best-practices review (dependency + prompt + LLM audit)
   sync            Synchronize Tier 1 organizational rules from remote origin
   prefs           Manage local developer preferences (.agents/rules/personal/)
@@ -204,6 +215,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             if "--binary-mode" not in sub_argv:
                 sub_argv = ["--binary-mode", *sub_argv]
         return install_main(sub_argv)
+
+    if subcommand == "auth":
+        return auth_main(sub_argv)
 
     if subcommand == "review":
         return review_main(sub_argv)

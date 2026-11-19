@@ -241,9 +241,10 @@ Organizations maintain canonical Tier 1 rules in a dedicated central governance 
 │   └── dev-env-tooling.zip            # Legacy portable script distribution bundle
 ├── scripts/
 │   ├── __init__.py                    # Package metadata & version
+│   ├── auth_manager.py                # User-global & repo-local credential manager (`agentic-dev auth`)
 │   ├── build_binary.py                # Reproducible builder for dist/agentic-dev and dist/agentic-dev.pyz
 │   ├── bundled_assets.py              # Workspace template bootstrapper & collision-safe .env merger
-│   ├── cli.py                         # Unified agentic-dev CLI dispatcher (init, review, sync, prefs, doctor)
+│   ├── cli.py                         # Unified agentic-dev CLI dispatcher (init, auth, review, sync, prefs, doctor)
 │   ├── constants.py                   # Centralized repository constants for rule paths & tiers
 │   ├── dependency_scanner.py          # Bidirectional N-degree multi-language dependency scanner
 │   ├── gemini_client.py               # Gemini 3.8 Flash review client (Vertex AI & Google AI Studio)
@@ -269,14 +270,19 @@ Organizations maintain canonical Tier 1 rules in a dedicated central governance 
 ### 1. Setting Up in This Repository
 
 1. **Configure Google Cloud / Gemini Credentials**:
-   - **Option A (Recommended: Google Cloud ADC)**:
+   - **Option A (Recommended for standalone CLI: User-Global Credential Store)**:
+     ```bash
+     agentic-dev auth set
+     # Stored securely (0600) at ~/.config/agentic-dev/credentials.env across all repos
+     ```
+   - **Option B (Google Cloud ADC)**:
      ```bash
      gcloud auth application-default login
      ```
-   - **Option B (Google AI Studio API Key)**:
+   - **Option C (Repo-local `.env` override)**:
      ```bash
      cp .env.example .env
-     # Edit .env and set GOOGLE_AI_STUDIO_KEY=your_key_here
+     # Or run: agentic-dev auth set --local
      ```
 
 2. **Install Assistant Tooling & Git Hooks**:
@@ -372,6 +378,9 @@ Unified entrypoint dispatching to all local validation and governance tools:
 agentic-dev init                            # Launch interactive 3-step setup wizard
 agentic-dev init --all -y --gitignore       # Non-interactive full setup
 agentic-dev init --clean                    # Remove generated hooks, skills, and managed .env/.gitignore blocks
+agentic-dev auth status                     # Show resolved credential source and masked API key
+agentic-dev auth set [--local] [--stdin]    # Store API key in user-global config (0600) or repo .env
+agentic-dev auth clear [--local]            # Remove stored API key from global config or repo .env
 agentic-dev doctor                          # Verify Git hook, .env, active rule tiers, and ADC/API key auth
 agentic-dev review [--dep-depth 1]          # Run pre-commit review against staged changes
 agentic-dev sync [--force] [--verbose]      # Synchronize Tier 1 organizational rules from ORG_RULES_SYNC_URL
