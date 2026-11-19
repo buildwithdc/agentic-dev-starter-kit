@@ -36,7 +36,7 @@ jobs:
 
       - name: Run Multi-Tier Pre-Commit / PR Reviewer
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_AI_STUDIO_KEY: ${{ secrets.GOOGLE_AI_STUDIO_KEY }}
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
         run: |
           python3 scripts/pre_commit_reviewer.py

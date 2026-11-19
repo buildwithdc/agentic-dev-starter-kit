@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -305,6 +306,154 @@ class TestUnifiedCLI(unittest.TestCase):
         # Warm run reuses extracted cache directory directly
         res2 = subprocess.run([str(out_bin), "doctor"], env=env, capture_output=True, text=True, check=True)
         self.assertIn(f"invoked:{out_bin} args:doctor", res2.stdout)
+
+    def test_init_prints_auth_tip_when_key_missing(self) -> None:
+        import os
+
+        from scripts.constants import ENV_CONFIG_DIR
+
+        cfg_dir = self.root_dir / "empty_cfg"
+        with patch.dict(os.environ, {ENV_CONFIG_DIR: str(cfg_dir)}, clear=False):
+            os.environ.pop("GOOGLE_AI_STUDIO_KEY", None)
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = cli_main(["init", "--git-hook", "-y", "--no-gitignore", "--root-dir", str(self.root_dir)])
+        self.assertEqual(rc, 0)
+        self.assertIn("agentic-dev auth set", buf.getvalue())
+
+    def test_init_wizard_global_binary_and_path_step(self) -> None:
+        import os
+
+        from scripts.install_tooling import ensure_dir_in_shell_rc
+
+        fake_download = self.root_dir / "Downloads" / "agentic-dev-macos-arm64"
+        fake_download.parent.mkdir(parents=True, exist_ok=True)
+        fake_download.write_text("#!/bin/sh\necho fake-bin\n", encoding="utf-8")
+
+        fake_bin_dir = self.root_dir / "global_bin"
+        fake_rc = self.root_dir / ".zshrc"
+
+        # Step 1: '2', Step 2: 'skip', Step 3: 'n', Step 4a: 'y' (copy), Step 4b: 'y' (add to rc)
+        with (
+            patch.dict(
+                os.environ,
+                {"AGENTIC_DEV_BIN_DIR": str(fake_bin_dir), "PATH": "/usr/bin:/bin"},
+                clear=False,
+            ),
+            patch("scripts.install_tooling._detect_invoking_binary_path", return_value=fake_download),
+            patch("scripts.install_tooling._detect_shell_rc_file", return_value=fake_rc),
+            patch("builtins.input", side_effect=["2", "skip", "n", "y", "y"]),
+        ):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = cli_main(["init", "--root-dir", str(self.root_dir)])
+            self.assertEqual(rc, 0)
+            out = buf.getvalue()
+            self.assertIn("[Step 4/4] Global CLI Installation (PATH):", out)
+
+        expected_bin = fake_bin_dir / ("agentic-dev.exe" if os.name == "nt" else "agentic-dev")
+        self.assertTrue(expected_bin.is_file())
+        if os.name != "nt":
+            rc_text = fake_rc.read_text(encoding="utf-8")
+            self.assertIn(f'export PATH="{fake_bin_dir.resolve()}:$PATH"', rc_text)
+            # Calling ensure_dir_in_shell_rc a second time is idempotent
+            _, modified_again = ensure_dir_in_shell_rc(fake_bin_dir, fake_rc)
+            self.assertFalse(modified_again)
+
+    def test_init_install_global_flag_non_interactive(self) -> None:
+        import os
+
+        fake_download = self.root_dir / "Downloads" / "agentic-dev"
+        fake_download.parent.mkdir(parents=True, exist_ok=True)
+        fake_download.write_text("#!/bin/sh\necho fake-bin\n", encoding="utf-8")
+
+        fake_bin_dir = self.root_dir / "flag_bin"
+        fake_rc = self.root_dir / ".zshrc"
+
+        with (
+            patch.dict(
+                os.environ,
+                {"AGENTIC_DEV_BIN_DIR": str(fake_bin_dir), "PATH": "/usr/bin:/bin"},
+                clear=False,
+            ),
+            patch("scripts.install_tooling._detect_invoking_binary_path", return_value=fake_download),
+            patch("scripts.install_tooling._detect_shell_rc_file", return_value=fake_rc),
+        ):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = cli_main(
+                    [
+                        "init",
+                        "--git-hook",
+                        "-y",
+                        "--no-gitignore",
+                        "--install-global",
+                        "--root-dir",
+                        str(self.root_dir),
+                    ]
+                )
+            self.assertEqual(rc, 0)
+
+        expected_bin = fake_bin_dir / ("agentic-dev.exe" if os.name == "nt" else "agentic-dev")
+        self.assertTrue(expected_bin.is_file())
+
+    def test_uninstall_subcommand_removes_binary_rc_cache_and_optional_purge(self) -> None:
+        base = Path(self.root_dir) / "uninstall_case"
+        fake_bin_dir = base / "bin"
+        fake_cache_home = base / "cache_home"
+        fake_config_dir = base / "config_dir"
+        fake_rc = base / ".zshrc"
+
+        fake_bin_dir.mkdir(parents=True, exist_ok=True)
+        binary_name = "agentic-dev.exe" if os.name == "nt" else "agentic-dev"
+        fake_bin = fake_bin_dir / binary_name
+        fake_bin.write_bytes(b"#!/bin/sh\necho bin\n")
+
+        cache_app_dir = fake_cache_home / "agentic-dev"
+        cache_app_dir.mkdir(parents=True, exist_ok=True)
+        (cache_app_dir / "model_cache.json").write_text("{}", encoding="utf-8")
+
+        fake_config_dir.mkdir(parents=True, exist_ok=True)
+        creds_file = fake_config_dir / "credentials.env"
+        creds_file.write_text("GEMINI_API_KEY=secret\n", encoding="utf-8")
+
+        fake_rc.write_text(
+            "# user comment\n"
+            'export PATH="/custom/bin:$PATH"\n'
+            "\n"
+            "# Added by agentic-dev\n"
+            f'export PATH="{fake_bin_dir}:$PATH"\n',
+            encoding="utf-8",
+        )
+
+        env_overrides = {
+            "AGENTIC_DEV_BIN_DIR": str(fake_bin_dir),
+            "XDG_CACHE_HOME": str(fake_cache_home),
+            "AGENTIC_DEV_CONFIG_DIR": str(fake_config_dir),
+        }
+        with (
+            patch.dict(os.environ, env_overrides, clear=False),
+            patch("scripts.install_tooling._candidate_shell_rc_files", return_value=[fake_rc]),
+        ):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = cli_main(["uninstall"])
+            self.assertEqual(rc, 0)
+
+            self.assertFalse(fake_bin.exists())
+            self.assertFalse(cache_app_dir.exists())
+            rc_text = fake_rc.read_text(encoding="utf-8")
+            self.assertIn('export PATH="/custom/bin:$PATH"', rc_text)
+            self.assertNotIn("# Added by agentic-dev", rc_text)
+            self.assertNotIn(str(fake_bin_dir), rc_text)
+            # Credentials preserved unless --purge is supplied
+            self.assertTrue(creds_file.exists())
+
+            buf_purge = io.StringIO()
+            with redirect_stdout(buf_purge):
+                rc_purge = cli_main(["uninstall", "--purge"])
+            self.assertEqual(rc_purge, 0)
+            self.assertFalse(fake_config_dir.exists())
 
 
 if __name__ == "__main__":

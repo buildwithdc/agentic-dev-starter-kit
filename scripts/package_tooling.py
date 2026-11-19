@@ -86,7 +86,7 @@ and dynamic installers for Antigravity, Claude Code, and Git hooks.
 3. (Optional) Configure Gemini API for LLM-powered reviews:
    ```bash
    cp .env.example .env
-   # Edit .env and set GEMINI_API_KEY
+   # Edit .env and set GOOGLE_AI_STUDIO_KEY
    ```
 
 4. Audit staged code changes at any time:

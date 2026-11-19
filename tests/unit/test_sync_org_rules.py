@@ -319,6 +319,33 @@ class TestSyncOrgRules(unittest.TestCase):
         load_dotenv(self.root_dir)
         self.assertEqual(os.environ.get("ORG_RULES_SYNC_URL"), "https://example.com/rules.zip")
 
+    def test_load_dotenv_layered_global_and_repo_precedence(self) -> None:
+        import os
+
+        from scripts.constants import ENV_CONFIG_DIR
+
+        global_cfg_dir = self.root_dir / "global_cfg"
+        global_cfg_dir.mkdir(parents=True, exist_ok=True)
+        (global_cfg_dir / "credentials.env").write_text(
+            "GLOBAL_ONLY_KEY=global_val\nSHARED_KEY=from_global\n",
+            encoding="utf-8",
+        )
+        (self.root_dir / ".env").write_text(
+            "SHARED_KEY=from_repo\n",
+            encoding="utf-8",
+        )
+
+        with patch.dict(os.environ, {ENV_CONFIG_DIR: str(global_cfg_dir)}, clear=False):
+            os.environ.pop("GLOBAL_ONLY_KEY", None)
+            os.environ.pop("SHARED_KEY", None)
+            try:
+                load_dotenv(self.root_dir)
+                self.assertEqual(os.environ.get("GLOBAL_ONLY_KEY"), "global_val")
+                self.assertEqual(os.environ.get("SHARED_KEY"), "from_repo")
+            finally:
+                os.environ.pop("GLOBAL_ONLY_KEY", None)
+                os.environ.pop("SHARED_KEY", None)
+
     @patch("builtins.print")
     def test_sync_org_rules_verbose_empty_cache(self, mock_print) -> None:
         # No remote URL and empty org dir

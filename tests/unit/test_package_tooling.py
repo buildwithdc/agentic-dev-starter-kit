@@ -27,7 +27,7 @@ class TestPackageTooling(unittest.TestCase):
 
         # Mock files
         (self.root_dir / "AGENTS.md").write_text("# Mock Agents Guidelines\n", encoding="utf-8")
-        (self.root_dir / ".env.example").write_text("GEMINI_API_KEY=test\n", encoding="utf-8")
+        (self.root_dir / ".env.example").write_text("GOOGLE_AI_STUDIO_KEY=test\n", encoding="utf-8")
         (self.root_dir / "scripts" / "install_tooling.py").write_text("print('install')\n", encoding="utf-8")
         (self.root_dir / "scripts" / "pre_commit_reviewer.py").write_text("print('review')\n", encoding="utf-8")
         (self.root_dir / ".agents" / "rules" / "00_meta.md").write_text("# Rule\n", encoding="utf-8")

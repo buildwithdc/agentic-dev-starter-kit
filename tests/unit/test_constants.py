@@ -103,6 +103,12 @@ class TestConstants(unittest.TestCase):
         self.assertGreater(SEVERITY_PRIORITY["ERROR"], SEVERITY_PRIORITY["WARN"])
         self.assertGreater(SEVERITY_PRIORITY["WARN"], SEVERITY_PRIORITY["INFO"])
 
+    def test_version_consistency(self) -> None:
+        import scripts
+        from scripts.constants import APP_VERSION
+
+        self.assertEqual(scripts.__version__, APP_VERSION)
+
 
 if __name__ == "__main__":
     unittest.main()

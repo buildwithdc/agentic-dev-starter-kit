@@ -30,6 +30,7 @@ try:
         DEFAULT_SYNC_TTL_SECONDS,
         ORG_RULES_REL_PATH,
         SYNC_TIMESTAMP_FILENAME,
+        get_global_credentials_file,
     )
 except ImportError:
     from constants import (
@@ -37,6 +38,7 @@ except ImportError:
         DEFAULT_SYNC_TTL_SECONDS,
         ORG_RULES_REL_PATH,
         SYNC_TIMESTAMP_FILENAME,
+        get_global_credentials_file,
     )
 
 DEFAULT_SYNC_INTERVAL_SECONDS = DEFAULT_SYNC_TTL_SECONDS
@@ -45,24 +47,40 @@ DEFAULT_TIMESTAMP_RELATIVE_PATH = f"{ORG_RULES_REL_PATH}/{SYNC_TIMESTAMP_FILENAM
 DEFAULT_ORG_RULES_RELATIVE_PATH = ORG_RULES_REL_PATH
 
 
-def load_dotenv(root_dir: Path | str = ".") -> None:
-    """Load environment variables from .env file in root_dir if present."""
-    env_file = Path(root_dir).resolve() / ".env"
+def parse_env_file(env_file: Path) -> dict[str, str]:
+    """Parse KEY=VALUE pairs from a dotenv-style file without mutating os.environ."""
+    parsed: dict[str, str] = {}
     if not env_file.is_file():
-        return
+        return parsed
     try:
         content = env_file.read_text(encoding="utf-8")
-        for line in content.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            k = k.strip()
-            v = v.strip().strip("'\"")
-            if k and k not in os.environ:
-                os.environ[k] = v
     except Exception:
-        pass
+        return parsed
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        k, v = line.split("=", 1)
+        k = k.strip()
+        v = v.strip().strip("'\"")
+        if k:
+            parsed[k] = v
+    return parsed
+
+
+def load_dotenv(root_dir: Path | str = ".") -> None:
+    """Load environment variables with precedence: os.environ > repo .env > user-global credentials."""
+    resolved_root = Path(root_dir).resolve()
+    candidate_files = (
+        resolved_root / ".env",
+        get_global_credentials_file(),
+    )
+    for env_file in candidate_files:
+        for k, v in parse_env_file(env_file).items():
+            if k not in os.environ and v:
+                os.environ[k] = v
 
 
 def normalize_sync_url(url: str) -> str:
